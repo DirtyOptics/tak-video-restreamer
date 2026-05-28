@@ -1,0 +1,349 @@
+<!--
+This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.
+ Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Video Input - Video Restreamer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">
+                        Dashboard
+                    </a>
+                    <a href="/recordings" class="nav-link">
+                        Recordings
+                    </a>
+                    <a href="/utils" class="nav-link">
+                        Utils
+                    </a>
+                    <a href="/test" class="nav-link active">
+                        Test Video
+                    </a>
+                    <a href="/videowall" class="nav-link">
+                        Video Wall
+                    </a>
+                    <a href="/settings" class="nav-link">
+                        Settings
+                    </a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <section class="card">
+                <h2>Test Video Input</h2>
+                <p>Generate test patterns to validate your streaming server</p>
+
+                <div class="info-box">
+                    <strong>SRT (Secure Reliable Transport)</strong>: Low-latency protocol ideal for streaming over unreliable networks.<br>
+                    <strong>RTSP (Real Time Streaming Protocol)</strong>: Standard protocol for IP cameras and professional streaming.<br>
+                    <strong>RTSP-UDP</strong>: RTSP with UDP transport for lower latency (less reliable).<br>
+                    Test pattern will be pushed and automatically available on all protocols (RTSP/WebRTC).
+                </div>
+
+                <div class="form-group" style="text-align: left;">
+                    <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">Select Protocol:</label>
+                    <div class="protocol-selector" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem;">
+                        <label style="padding: 0.75rem; border: 2px solid var(--border-color); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="radio" name="protocol" value="srt" checked onchange="updateProtocol()"> 
+                            <span><strong>SRT</strong><br><small style="color: var(--text-muted);">Secure Reliable Transport</small></span>
+                        </label>
+                        <label style="padding: 0.75rem; border: 2px solid var(--border-color); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="radio" name="protocol" value="rtsp" onchange="updateProtocol()"> 
+                            <span><strong>RTSP (TCP)</strong><br><small style="color: var(--text-muted);">Standard TCP transport</small></span>
+                        </label>
+                        <label style="padding: 0.75rem; border: 2px solid var(--border-color); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="radio" name="protocol" value="rtsp-udp" onchange="updateProtocol()"> 
+                            <span><strong>RTSP (UDP)</strong><br><small style="color: var(--text-muted);">Low latency UDP transport</small></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="stream-name">Stream Name:</label>
+                    <input type="text" id="stream-name" placeholder="test-input" value="test-input">
+                </div>
+
+                <div class="form-group">
+                    <label for="pattern">Test Pattern:</label>
+                    <select id="pattern">
+                        <option value="testsrc" selected>Test Source (counter + bars)</option>
+                        <option value="testsrc2">Test Source 2 (modern)</option>
+                        <option value="smptebars">SMPTE Color Bars</option>
+                        <option value="smptehdbars">SMPTE HD Color Bars</option>
+                        <option value="color">Solid Color (blue)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="resolution">Resolution:</label>
+                    <select id="resolution">
+                        <option value="640x360">360p (640x360)</option>
+                        <option value="1280x720" selected>720p (1280x720)</option>
+                        <option value="1920x1080">1080p (1920x1080)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="duration">Duration (seconds):</label>
+                    <input type="number" id="duration" min="0" max="3600" value="60" style="appearance: textfield; -moz-appearance: textfield;">
+                    <br><small style="color: var(--text-muted);">0 = continuous (runs until stopped), max 3600</small>
+                </div>
+
+                <button class="btn btn-primary" id="start-test" onclick="startTest()">Start Test</button>
+                <button class="btn btn-danger" id="stop-test" onclick="stopTest()" disabled>Stop Test</button>
+                <button class="btn btn-secondary" onclick="clearConsole()">Clear Console</button>
+
+                <div id="elapsed-bar" style="display: none; margin-top: 1rem; padding: 0.75rem 1rem; background: var(--bg-secondary); border-radius: 8px; font-family: monospace; font-size: 1.1em; text-align: center;">
+                    <span id="elapsed-label">Elapsed:</span> <strong id="elapsed-time">00:00</strong>
+                </div>
+
+                <div id="status" class="status-box" style="display: none;"></div>
+                <div id="logs" class="log-box" style="display: none;"></div>
+
+                <div class="info-box" style="margin-top: 40px;">
+                    <h3>Viewing Test Streams</h3>
+                    <p><strong>RTSP (TCP):</strong> rtsp://localhost:8554/[stream-name]</p>
+                    <p><strong>RTSP (UDP):</strong> rtsp://localhost:8554/[stream-name] (specify UDP in player)</p>
+                    <p><strong>SRT:</strong> srt://localhost:8890?streamid=read:[stream-name]</p>
+                    <p><strong>Use VLC or FFplay to view:</strong></p>
+                    <p><code>ffplay rtsp://localhost:8554/test-input</code> (TCP)</p>
+                    <p><code>ffplay -rtsp_transport udp rtsp://localhost:8554/test-input</code> (UDP)</p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        let currentTestId = null;
+        let statusInterval = null;
+        let elapsedInterval = null;
+        let testStartTime = null;
+        let currentProtocol = 'srt';
+
+        function updateProtocol() {
+            currentProtocol = document.querySelector('input[name="protocol"]:checked').value;
+        }
+
+        function formatElapsed(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        }
+
+        function startElapsedTimer(startSec) {
+            testStartTime = startSec || 0;
+            const bar = document.getElementById('elapsed-bar');
+            const el = document.getElementById('elapsed-time');
+            bar.style.display = 'block';
+            el.textContent = formatElapsed(testStartTime);
+            if (elapsedInterval) clearInterval(elapsedInterval);
+            elapsedInterval = setInterval(() => {
+                testStartTime++;
+                el.textContent = formatElapsed(testStartTime);
+            }, 1000);
+        }
+
+        function stopElapsedTimer() {
+            if (elapsedInterval) { clearInterval(elapsedInterval); elapsedInterval = null; }
+            document.getElementById('elapsed-bar').style.display = 'none';
+        }
+
+        async function startTest() {
+            const streamName = document.getElementById('stream-name').value;
+            const resolution = document.getElementById('resolution').value;
+            const duration = parseInt(document.getElementById('duration').value) || 0;
+            const pattern = document.getElementById('pattern').value;
+
+            if (!streamName) {
+                showStatus('error', 'Stream name is required');
+                return;
+            }
+
+            try {
+                document.getElementById('start-test').disabled = true;
+                const protocolLabel = currentProtocol === 'rtsp-udp' ? 'RTSP-UDP' : currentProtocol.toUpperCase();
+                showStatus('info', `Starting ${protocolLabel} test pattern...`);
+                const durLabel = duration === 0 ? 'continuous' : `${duration}s`;
+                showLog(`Starting ${protocolLabel} test: ${streamName} @ ${resolution} [${pattern}] ${durLabel}`);
+
+                let endpoint;
+                if (currentProtocol === 'srt') endpoint = '/api/test/srt';
+                else if (currentProtocol === 'rtsp-udp') endpoint = '/api/test/rtsp-udp';
+                else endpoint = '/api/test/rtsp';
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ streamName, resolution, duration, pattern })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    currentTestId = result.testId;
+                    document.getElementById('stop-test').disabled = false;
+                    
+                    let viewUrl = '';
+                    let viewCommand = '';
+                    if (currentProtocol === 'srt') {
+                        viewUrl = `srt://localhost:8890?streamid=read:${streamName}`;
+                        viewCommand = `ffplay "${viewUrl}"`;
+                    } else if (currentProtocol === 'rtsp-udp') {
+                        viewUrl = `rtsp://localhost:8554/${streamName} (UDP)`;
+                        viewCommand = `ffplay -rtsp_transport udp rtsp://localhost:8554/${streamName}`;
+                    } else {
+                        viewUrl = `rtsp://localhost:8554/${streamName}`;
+                        viewCommand = `ffplay rtsp://localhost:8554/${streamName}`;
+                    }
+                    
+                    showStatus('success', `Test started! View at: ${viewUrl}`);
+                    showLog(`Stream available at ${viewUrl}`);
+                    showLog(`Command: ${viewCommand}`);
+                    
+                    startElapsedTimer(0);
+                    statusInterval = setInterval(() => checkTestStatus(result.testId), 2000);
+                } else {
+                    showStatus('error', result.error || 'Failed to start test');
+                    document.getElementById('start-test').disabled = false;
+                }
+            } catch (error) {
+                showStatus('error', error.message);
+                document.getElementById('start-test').disabled = false;
+            }
+        }
+
+        async function stopTest() {
+            if (!currentTestId) return;
+
+            try {
+                showLog('Stopping test...');
+                const response = await fetch(`/api/test/${currentTestId}/stop`, { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus('info', `Test stopped after ${formatElapsed(testStartTime || 0)}`);
+                    showLog('Test stopped successfully');
+                    cleanupTest();
+                } else {
+                    showStatus('error', result.error || 'Failed to stop test');
+                }
+            } catch (error) {
+                showStatus('error', error.message);
+            }
+        }
+
+        async function checkTestStatus(testId) {
+            try {
+                const response = await fetch(`/api/test/${testId}/status`);
+                const status = await response.json();
+
+                if (!status.running) {
+                    showStatus('success', `Test completed after ${formatElapsed(status.elapsed || testStartTime || 0)}`);
+                    showLog('Test finished');
+                    cleanupTest();
+                }
+            } catch (error) {
+                console.error('Status check error:', error);
+            }
+        }
+
+        function cleanupTest() {
+            document.getElementById('start-test').disabled = false;
+            document.getElementById('stop-test').disabled = true;
+            currentTestId = null;
+            if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+            stopElapsedTimer();
+        }
+
+        function showStatus(level, message) {
+            const statusBox = document.getElementById('status');
+            statusBox.style.display = 'block';
+            statusBox.className = `status-box ${level}`;
+            statusBox.textContent = message;
+        }
+
+        function showLog(message) {
+            const logBox = document.getElementById('logs');
+            logBox.style.display = 'block';
+            const timestamp = new Date().toISOString().substring(11, 19) + ' UTC';
+            logBox.innerHTML += `[${timestamp}] ${message}<br>`;
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        function clearConsole() {
+            const logBox = document.getElementById('logs');
+            logBox.innerHTML = '';
+            logBox.style.display = 'none';
+        }
+
+        // Restore running test on page load/refresh
+        async function restoreRunningTest() {
+            try {
+                const resp = await fetch('/api/test/list');
+                const data = await resp.json();
+                if (data.success && data.tests.length > 0) {
+                    const t = data.tests[0];
+                    currentTestId = t.testId;
+                    document.getElementById('start-test').disabled = true;
+                    document.getElementById('stop-test').disabled = false;
+
+                    const label = t.protocol === 'rtsp-udp' ? 'RTSP-UDP' : t.protocol.toUpperCase();
+                    showStatus('success', `Test running: ${t.streamName} (${label} ${t.resolution} [${t.pattern}])`);
+                    showLog(`Restored running test: ${t.streamName} — elapsed ${formatElapsed(t.elapsed)}`);
+
+                    startElapsedTimer(t.elapsed);
+                    statusInterval = setInterval(() => checkTestStatus(t.testId), 2000);
+                }
+            } catch (e) {
+                // Server not reachable — ignore
+            }
+        }
+        restoreRunningTest();
+
+        // Logout
+        document.getElementById('logout-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            fetch('/api/auth/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
+        });
+
+        // Default password warning
+        fetch('/api/auth/status').then(r => r.json()).then(data => {
+            if (data.default_credentials) {
+                const banner = document.createElement('div');
+                banner.innerHTML = '&#9888; <strong>Security Warning:</strong> Default password in use. Change via ADMIN_PASSWORD env var.';
+                Object.assign(banner.style, {
+                    position: 'fixed', top: '0', left: '0', right: '0',
+                    padding: '0.75rem 1rem', background: '#f59e0b', color: '#000',
+                    textAlign: 'center', zIndex: '9999', fontWeight: '500', fontSize: '0.9em'
+                });
+                document.body.prepend(banner);
+                document.body.style.paddingTop = '3rem';
+            }
+        }).catch(() => {});
+    </script>
+    </div>
+</body>
+</html>

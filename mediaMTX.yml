@@ -1,0 +1,113 @@
+# TAK Video Restreamer - MediaMTX configuration
+
+###############################################
+# Global settings -> General
+
+# Timeout of read operations.
+readTimeout: 10s
+# Timeout of write operations.
+writeTimeout: 10s
+# Size of the queue of outgoing packets.
+writeQueueSize: 512
+# Maximum size of outgoing UDP payloads.
+udpMaxPayloadSize: 1452
+
+###############################################
+# Global settings -> Authentication
+# Allow any user to publish or read without credentials.
+# This is needed for SRT streams from ATAK/drones that don't send credentials.
+authMethod: internal
+authInternalUsers:
+  - user: any
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+  - user: any
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: api
+      - action: metrics
+      - action: pprof
+
+###############################################
+# Global settings -> Control API
+api: yes
+apiAddress: 0.0.0.0:8889
+
+###############################################
+# Global settings -> RTSP server
+rtsp: yes
+rtspAddress: 0.0.0.0:8554
+# TCP-only is more reliable through NAT/firewalls
+rtspTransports: [tcp]
+# Support both plain and encrypted RTSP
+rtspEncryption: optional
+rtspsAddress: 0.0.0.0:8555
+rtspServerCert: /opt/app/certs/server.crt
+rtspServerKey: /opt/app/certs/server.key
+
+###############################################
+# Global settings -> RTMP server
+rtmp: yes
+rtmpAddress: 0.0.0.0:1935
+
+###############################################
+# Global settings -> HLS server
+hls: yes
+hlsAddress: :8888
+hlsEncryption: no
+hlsTrustedProxies: ['127.0.0.1']
+hlsVariant: fmp4
+hlsSegmentCount: 3
+hlsSegmentDuration: 500ms
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 50M
+hlsMuxerCloseAfter: 60s
+hlsAlwaysRemux: yes
+
+###############################################
+# Global settings -> WebRTC server
+# Disabled; explicit address to avoid conflict with API port 8889
+webrtc: no
+webrtcAddress: :9898
+
+###############################################
+# Global settings -> SRT server
+srt: yes
+srtAddress: 0.0.0.0:8890
+
+###############################################
+# Default path settings
+pathDefaults:
+  source: publisher
+  record: no
+  recordPath: /opt/app/streams/%path/%Y-%m-%d_%H-%M-%S
+  overridePublisher: yes
+  srtPublishPassphrase: ""
+  srtReadPassphrase: ""
+
+###############################################
+# Paths configuration
+paths:
+  ~^tak-.*$:
+    source: publisher
+    record: no
+
+  ~^drone.*$:
+    source: publisher
+    record: no
+
+  ~^uas.*$:
+    source: publisher
+    record: no
+
+  ~^(.+)_hls$:
+    runOnDemand: ffmpeg -rtsp_transport tcp -analyzeduration 2000000 -probesize 2000000 -i rtsp://localhost:8554/$G1 -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -level 3.1 -pix_fmt yuv420p -b:v 2M -maxrate 2.5M -bufsize 5M -g 30 -keyint_min 30 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -err_detect ignore_err -fflags +genpts+discardcorrupt -f rtsp -rtsp_transport tcp rtsp://localhost:8554/$MTX_PATH
+    runOnDemandStartTimeout: 10s
+    runOnDemandCloseAfter: 10s
+    runOnDemandRestart: yes
+
+  ~^.*$:
+    source: publisher

@@ -1,0 +1,538 @@
+<!--
+This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.
+ Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recordings - RTSP Restreamer Control Panel</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">
+                        Dashboard
+                    </a>
+                    <a href="/recordings" class="nav-link active">
+                        Recordings
+                    </a>
+                    <a href="/utils" class="nav-link">
+                        Utils
+                    </a>
+                    <a href="/test" class="nav-link">
+                        Test Video
+                    </a>
+                    <a href="/videowall" class="nav-link">
+                        Video Wall
+                    </a>
+                    <a href="/settings" class="nav-link">
+                        Settings
+                    </a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+                <div class="header-actions">
+                </div>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <!-- Recordings Section -->
+            <section class="card">
+                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                    <h2 style="margin: 0;">All Recordings</h2>
+                    <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                        <!-- Recording Statistics - Compact -->
+                        <div style="display: flex; gap: 0.75rem;">
+                            <div class="stat-compact">
+                                <span class="stat-compact-value" id="total-recordings">0</span>
+                                <span class="stat-compact-label">Files</span>
+                            </div>
+                            <div class="stat-compact">
+                                <span class="stat-compact-value" id="total-size">0 B</span>
+                                <span class="stat-compact-label">Total Size</span>
+                            </div>
+                        </div>
+                        <div class="card-actions">
+                            <label style="display: none; align-items: center; gap: 0.5rem; margin-right: 0.5rem;" id="select-all-container">
+                                <input type="checkbox" id="select-all-checkbox" style="cursor: pointer;">
+                                <span style="font-size: 0.9em; color: var(--text-secondary);">Select All</span>
+                            </label>
+                            <button id="delete-selected-recordings" class="btn btn-danger" style="display: none;">
+                                Delete Selected
+                            </button>
+                            <button id="refresh-recordings" class="btn btn-secondary">
+                                Refresh
+                            </button>
+                            <button id="delete-all-recordings" class="btn btn-danger" style="display: none;">
+                                Delete All
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="recordings-container">
+                    <div class="loading">
+                        Loading recordings...
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // Simple recordings page client
+        class RecordingsClient {
+            constructor() {
+                this.recordings = [];
+                this.init();
+            }
+
+            init() {
+                // WebSocket disabled - Flask-SocketIO requires socket.io-client library
+                // this.connectWebSocket();
+                
+                // Initial load
+                this.refreshRecordings();
+                
+                // Event listeners
+                document.getElementById('refresh-recordings').addEventListener('click', () => {
+                    this.refreshRecordings();
+                });
+                
+                document.getElementById('delete-all-recordings').addEventListener('click', () => {
+                    this.deleteAllRecordings();
+                });
+                
+                document.getElementById('delete-selected-recordings').addEventListener('click', () => {
+                    this.deleteSelectedRecordings();
+                });
+                
+                document.getElementById('select-all-checkbox').addEventListener('change', (e) => {
+                    this.toggleSelectAll(e.target.checked);
+                });
+            }
+
+            connectWebSocket() {
+                // Disabled: Flask-SocketIO uses socket.io protocol, not native WebSocket
+                // Native WebSocket connections to /ws will fail with 400
+                // To enable real-time updates, include socket.io-client library and use: this.socket = io();
+                /* 
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    console.log('WebSocket connected');
+                };
+                
+                this.ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                };
+                
+                this.ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'recording_started' || data.type === 'recording_stopped') {
+                        this.refreshRecordings();
+                    }
+                };
+                */
+            }
+
+            async refreshRecordings() {
+                try {
+                    const response = await fetch('/api/recordings');
+                    if (response.ok) {
+                        this.recordings = await response.json();
+                        this.displayRecordings();
+                        this.updateStats();
+                    }
+                } catch (error) {
+                    console.error('Error refreshing recordings:', error);
+                }
+            }
+
+            displayRecordings() {
+                const container = document.getElementById('recordings-container');
+                
+                if (!this.recordings || this.recordings.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <h3>No Recordings Found</h3>
+                            <p>Start recording streams to see them appear here</p>
+                            <a href="/" class="btn btn-primary">← Back to Dashboard</a>
+                        </div>
+                    `;
+                    document.getElementById('delete-all-recordings').style.display = 'none';
+                    return;
+                }
+
+                const recordingsHTML = this.recordings.map(recording => `
+                    <div class="recording-item-full" data-stream="${recording.stream}" data-filename="${recording.filename}">
+                        <div class="recording-content">
+                            <div class="recording-checkbox">
+                                <input type="checkbox" class="recording-select-checkbox" data-stream="${recording.stream}" data-filename="${recording.filename}">
+                            </div>
+                            <div class="recording-thumbnail">
+                                ${recording.hasThumbnail ? `
+                                    <img src="${recording.thumbnailUrl}" 
+                                         alt="Thumbnail" 
+                                         class="thumbnail-image"
+                                         onerror="this.parentElement.innerHTML='<div class=\\'thumbnail-placeholder\\'>📹</div>'">
+                                ` : `
+                                    <div class="thumbnail-placeholder">
+                                        📹
+                                        <button class="btn btn-small btn-secondary generate-thumb-btn" 
+                                                onclick="recordingsClient.generateThumbnail('${recording.stream}', '${recording.filename}')">
+                                            Generate
+                                        </button>
+                                    </div>
+                                `}
+                            </div>
+                            <div class="recording-info">
+                                <div class="recording-header">
+                                    <div class="recording-title">
+                                        ${recording.filename.replace('recording-', '').replace('.mp4', '')}
+                                    </div>
+                                    <div class="recording-stream">Stream: ${recording.stream}</div>
+                                </div>
+                                <div class="recording-details-full">
+                                    <div class="recording-detail">
+                                        <span class="recording-detail-label">File Size</span>
+                                        <span class="recording-detail-value">${this.formatBytes(recording.size)}</span>
+                                    </div>
+                                    <div class="recording-detail">
+                                        <span class="recording-detail-label">Created:</span>
+                                        <span class="recording-detail-value">${new Date(recording.created).toISOString().replace('T', ' ').substring(0, 19)} UTC</span>
+                                    </div>
+                                    <div class="recording-detail">
+                                        <span class="recording-detail-label">Modified:</span>
+                                        <span class="recording-detail-value">${new Date(recording.modified).toISOString().replace('T', ' ').substring(0, 19)} UTC</span>
+                                    </div>
+                                </div>
+                                <div class="recording-keywords" id="keywords-${recording.stream}-${recording.filename}">
+                                    <div class="recording-detail">
+                                        <span class="recording-detail-label">Keywords</span>
+                                        <div class="keywords-edit-wrapper">
+                                            <input type="text" 
+                                                   class="keywords-input" 
+                                                   id="keywords-input-${recording.stream}-${recording.filename}"
+                                                   placeholder="Add keywords (comma-separated)"
+                                                   value="">
+                                            <button class="btn btn-small btn-primary" 
+                                                    onclick="recordingsClient.updateKeywords('${recording.stream}', '${recording.filename}')">
+                                                Save
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="recording-actions-full">
+                            <button class="btn btn-secondary" onclick="recordingsClient.downloadRecording('${recording.stream}', '${recording.filename}')">
+                                💾 Download
+                            </button>
+                            <button class="btn btn-danger" onclick="recordingsClient.deleteRecording('${recording.stream}', '${recording.filename}')">
+                                🗑️ Delete
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+                
+                container.innerHTML = recordingsHTML;
+                document.getElementById('delete-all-recordings').style.display = this.recordings.length > 1 ? 'block' : 'none';
+                document.getElementById('select-all-container').style.display = this.recordings.length > 0 ? 'flex' : 'none';
+                
+                // Add event listeners to checkboxes
+                document.querySelectorAll('.recording-select-checkbox').forEach(checkbox => {
+                    checkbox.addEventListener('change', () => this.updateDeleteSelectedButton());
+                });
+                
+                // Load metadata for each recording to populate keywords
+                this.recordings.forEach(recording => {
+                    this.loadKeywords(recording.stream, recording.filename);
+                });
+            }
+
+            updateStats() {
+                const totalFiles = this.recordings.length;
+                const totalSize = this.recordings.reduce((sum, rec) => sum + rec.size, 0);
+
+                document.getElementById('total-recordings').textContent = totalFiles;
+                document.getElementById('total-size').textContent = this.formatBytes(totalSize);
+            }
+
+            async downloadRecording(stream, filename) {
+                const url = `/api/recordings/${stream}/${filename}`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+
+            async deleteRecording(stream, filename) {
+                if (!confirm(`Are you sure you want to delete the recording "${filename}"?\n\nThis action cannot be undone.`)) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/recordings/${stream}/${filename}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        this.showNotification(`Recording "${filename}" deleted successfully`, 'success');
+                        this.refreshRecordings();
+                    } else {
+                        const error = await response.json();
+                        this.showNotification(`Failed to delete recording: ${error.error}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error deleting recording:', error);
+                    this.showNotification('Failed to delete recording', 'error');
+                }
+            }
+
+            async deleteAllRecordings() {
+                if (!confirm(`Are you sure you want to delete ALL ${this.recordings.length} recordings?\n\nThis action cannot be undone.`)) {
+                    return;
+                }
+
+                let deletedCount = 0;
+                for (const recording of this.recordings) {
+                    try {
+                        const response = await fetch(`/api/recordings/${recording.stream}/${recording.filename}`, {
+                            method: 'DELETE'
+                        });
+                        if (response.ok) {
+                            deletedCount++;
+                        }
+                    } catch (error) {
+                        console.error('Error deleting recording:', error);
+                    }
+                }
+
+                this.showNotification(`Deleted ${deletedCount} recordings`, 'success');
+                this.refreshRecordings();
+            }
+
+            toggleSelectAll(checked) {
+                document.querySelectorAll('.recording-select-checkbox').forEach(checkbox => {
+                    checkbox.checked = checked;
+                });
+                this.updateDeleteSelectedButton();
+            }
+
+            updateDeleteSelectedButton() {
+                const selectedCount = document.querySelectorAll('.recording-select-checkbox:checked').length;
+                const deleteButton = document.getElementById('delete-selected-recordings');
+                
+                if (selectedCount > 0) {
+                    deleteButton.style.display = 'block';
+                    deleteButton.textContent = `Delete Selected (${selectedCount})`;
+                } else {
+                    deleteButton.style.display = 'none';
+                }
+                
+                // Update select all checkbox state
+                const totalCheckboxes = document.querySelectorAll('.recording-select-checkbox').length;
+                const selectAllCheckbox = document.getElementById('select-all-checkbox');
+                selectAllCheckbox.checked = selectedCount === totalCheckboxes && totalCheckboxes > 0;
+            }
+
+            async deleteSelectedRecordings() {
+                const selectedCheckboxes = document.querySelectorAll('.recording-select-checkbox:checked');
+                const selectedCount = selectedCheckboxes.length;
+                
+                if (selectedCount === 0) return;
+                
+                if (!confirm(`Are you sure you want to delete ${selectedCount} selected recording${selectedCount > 1 ? 's' : ''}?\n\nThis action cannot be undone.`)) {
+                    return;
+                }
+
+                const recordingsToDelete = [];
+                selectedCheckboxes.forEach(checkbox => {
+                    recordingsToDelete.push({
+                        stream: checkbox.dataset.stream,
+                        filename: checkbox.dataset.filename
+                    });
+                });
+
+                try {
+                    const response = await fetch('/api/recordings/bulk-delete', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ recordings: recordingsToDelete })
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        this.showNotification(`Deleted ${result.deletedCount} of ${selectedCount} recordings`, 'success');
+                        this.refreshRecordings();
+                    } else {
+                        const error = await response.json();
+                        this.showNotification(`Failed to delete recordings: ${error.error}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error deleting recordings:', error);
+                    this.showNotification('Failed to delete recordings', 'error');
+                }
+            }
+
+            formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            async generateThumbnail(stream, filename) {
+                try {
+                    const response = await fetch(`/api/recordings/${stream}/${filename}/generate-thumbnail`, {
+                        method: 'POST'
+                    });
+                    
+                    if (response.ok) {
+                        this.showNotification('Thumbnail generation started', 'success');
+                        // Refresh after a short delay to show the new thumbnail
+                        setTimeout(() => this.refreshRecordings(), 2000);
+                    } else {
+                        const error = await response.json();
+                        this.showNotification(`Failed to generate thumbnail: ${error.error}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error generating thumbnail:', error);
+                    this.showNotification('Failed to generate thumbnail', 'error');
+                }
+            }
+
+            async loadKeywords(stream, filename) {
+                try {
+                    // URL encode the stream and filename
+                    const encodedStream = encodeURIComponent(stream);
+                    const encodedFilename = encodeURIComponent(filename);
+                    
+                    const response = await fetch(`/api/recordings/${encodedStream}/${encodedFilename}/metadata`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const keywords = data.metadata.keywords || '';
+                        const inputId = `keywords-input-${stream}-${filename}`;
+                        const input = document.getElementById(inputId);
+                        if (input) {
+                            input.value = keywords;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading keywords:', error);
+                }
+            }
+
+            async updateKeywords(stream, filename) {
+                const inputId = `keywords-input-${stream}-${filename}`;
+                const input = document.getElementById(inputId);
+                if (!input) return;
+
+                const keywords = input.value.trim();
+                
+                try {
+                    // URL encode the stream and filename
+                    const encodedStream = encodeURIComponent(stream);
+                    const encodedFilename = encodeURIComponent(filename);
+                    
+                    const response = await fetch(`/api/recordings/${encodedStream}/${encodedFilename}/keywords`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ keywords })
+                    });
+                    
+                    if (response.ok) {
+                        this.showNotification('Keywords updated successfully', 'success');
+                    } else {
+                        const error = await response.json();
+                        this.showNotification(`Failed to update keywords: ${error.error}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error updating keywords:', error);
+                    this.showNotification('Failed to update keywords', 'error');
+                }
+            }
+
+            showNotification(message, type = 'info') {
+                // Simple notification system
+                const notification = document.createElement('div');
+                notification.className = `notification notification-${type}`;
+                notification.textContent = message;
+                
+                Object.assign(notification.style, {
+                    position: 'fixed',
+                    top: '20px',
+                    right: '20px',
+                    padding: '12px 20px',
+                    borderRadius: '8px',
+                    color: 'white',
+                    fontWeight: '500',
+                    zIndex: '9999',
+                    background: type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'
+                });
+                
+                document.body.appendChild(notification);
+                
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.parentNode.removeChild(notification);
+                    }
+                }, 3000);
+            }
+        }
+
+        // Initialize when DOM is loaded
+        let recordingsClient;
+        document.addEventListener('DOMContentLoaded', () => {
+            recordingsClient = new RecordingsClient();
+        });
+
+        // Logout
+        document.getElementById('logout-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            fetch('/api/auth/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
+        });
+
+        // Default password warning
+        fetch('/api/auth/status').then(r => r.json()).then(data => {
+            if (data.default_credentials) {
+                const banner = document.createElement('div');
+                banner.innerHTML = '&#9888; <strong>Security Warning:</strong> Default password in use. Change via ADMIN_PASSWORD env var.';
+                Object.assign(banner.style, {
+                    position: 'fixed', top: '0', left: '0', right: '0',
+                    padding: '0.75rem 1rem', background: '#f59e0b', color: '#000',
+                    textAlign: 'center', zIndex: '9999', fontWeight: '500', fontSize: '0.9em'
+                });
+                document.body.prepend(banner);
+                document.body.style.paddingTop = '3rem';
+            }
+        }).catch(() => {});
+    </script>
+</body>
+</html>

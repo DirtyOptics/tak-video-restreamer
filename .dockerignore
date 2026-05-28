@@ -1,0 +1,84 @@
+# Git
+.git
+.gitignore
+.github
+
+# Node.js
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache
+.venv/
+venv/
+venv_media/
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+._*
+
+# Logs
+*.log
+logs
+
+# Data directories (use volumes instead)
+data/
+streams/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Test files and results
+test_all_apis.ps1
+api_test_results_*.json
+tests/
+
+# Documentation (not needed in container)
+README.md
+SECURITY-DEPLOYMENT-GUIDE.md
+MIGRATION-GUIDE.md
+DEVELOPER-REFERENCE.md
+*.md
+!requirements.txt
+
+# Archive
+archive/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.example

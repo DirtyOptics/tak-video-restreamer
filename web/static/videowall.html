@@ -1,0 +1,403 @@
+<!--
+This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.
+ Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Wall — TAK Video Restreamer</title>
+    <script src="/static/socket.io.min.js"></script>
+    <script src="/static/hls.min.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        /* Page-level overrides: full-screen layout, no scroll */
+        html, body { height: 100%; overflow: hidden; }
+        .container { height: 100%; max-width: none; padding: 0; gap: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">Dashboard</a>
+                    <a href="/recordings" class="nav-link">Recordings</a>
+                    <a href="/utils" class="nav-link">Utils</a>
+                    <a href="/test" class="nav-link">Test Video</a>
+                    <a href="/videowall" class="nav-link active">Video Wall</a>
+                    <a href="/settings" class="nav-link">Settings</a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+                <div class="header-actions">
+                    <div class="vw-layout-btns">
+                        <button class="vw-layout-btn active" id="btn-2x2" onclick="setLayout(2, 2)">2×2</button>
+                        <button class="vw-layout-btn" id="btn-3x3" onclick="setLayout(3, 3)">3×3</button>
+                        <button class="vw-layout-btn" id="btn-4x50" onclick="setLayout(4, 50)">4x50</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="videowall-grid" id="videowall-grid"></div>
+    </div>
+
+    <script>
+    (function() {
+        let COLS = 2;
+        let CELL_COUNT = COLS * COLS;
+
+        // Per-cell hls.js state
+        const cells = [];
+
+        // Last known stream list
+        let lastStreams = [];
+
+        const STORAGE_KEY = 'vw_state';
+
+        function saveState() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                    layout: COLS,
+                    cells: cells.map(c => c.select.value)
+                }));
+            } catch {}
+        }
+
+        function loadState() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch { return null; }
+        }
+
+        function setLayout(n, m) {
+            // Save current selections
+            const saved = cells.map(c => c.select.value);
+
+            // Destroy all existing cells
+            for (let i = 0; i < cells.length; i++) destroyCell(i);
+            cells.length = 0;
+
+            COLS = n;
+            CELL_COUNT = n * m;
+
+            // Update grid CSS
+            const grid = document.getElementById('videowall-grid');
+            grid.innerHTML = '';
+            grid.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+            grid.style.gridTemplateRows = `repeat(${m}, 1fr)`;
+
+            // Update button states
+            document.getElementById('btn-2x2').classList.toggle('active', n === 2);
+            document.getElementById('btn-3x3').classList.toggle('active', n === 3);
+            document.getElementById('btn-4x50').classList.toggle('active', n === 4);
+
+            buildGrid();
+            populateSelects(lastStreams);
+
+            // Restore selections (up to new cell count)
+            for (let i = 0; i < Math.min(saved.length, cells.length); i++) {
+                if (saved[i]) {
+                    cells[i].select.value = saved[i];
+                    if (cells[i].select.value === saved[i]) {
+                        loadCell(i, saved[i]);
+                    }
+                }
+            }
+            saveState();
+        }
+
+        function buildGrid() {
+            const grid = document.getElementById('videowall-grid');
+            for (let i = 0; i < CELL_COUNT; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'vw-cell';
+                cell.innerHTML = `
+                    <div class="vw-cell-bar">
+                        <select class="vw-select" data-cell="${i}">
+                            <option value="">— empty —</option>
+                        </select>
+                    </div>
+                    <div class="vw-video-area">
+                        <video muted playsinline disablepictureinpicture controlslist="nopictureinpicture nodownload noremoteplayback"></video>
+                        <div class="vw-overlay">No stream selected</div>
+                        <div class="vw-status"></div>
+                    </div>
+                `;
+                grid.appendChild(cell);
+
+                const select = cell.querySelector('.vw-select');
+                const video = cell.querySelector('video');
+                const overlay = cell.querySelector('.vw-overlay');
+                const status = cell.querySelector('.vw-status');
+
+                const state = { hls: null, mediaRecovery: 0 };
+                cells.push({ select, video, overlay, status, state });
+
+                select.addEventListener('change', () => { loadCell(i, select.value); saveState(); });
+
+                // Click video area to expand/collapse
+                cell.querySelector('.vw-video-area').addEventListener('click', () => {
+                    cell.classList.toggle('expanded');
+                });
+            }
+        }
+
+        function destroyCell(idx) {
+            const { state, video, overlay, status } = cells[idx];
+            if (state.hls) {
+                state.hls.destroy();
+                state.hls = null;
+            }
+            video.src = '';
+            video.style.display = 'none';
+            overlay.textContent = 'No stream selected';
+            overlay.className = 'vw-overlay';
+            status.style.display = 'none';
+            state.mediaRecovery = 0;
+        }
+
+        function loadCell(idx, streamName) {
+            destroyCell(idx);
+            if (!streamName) return;
+            _loadCellWithSrc(idx, streamName, `/api/hls/proxy/${encodeURIComponent(streamName)}/index.m3u8?videoonly=1`, false);
+        }
+
+        function _loadCellWithSrc(idx, streamName, src, isTranscodeFallback) {
+            const { state, video, overlay, status } = cells[idx];
+            overlay.textContent = 'Connecting…';
+            overlay.className = 'vw-overlay active';
+            video.style.display = 'none';
+
+            if (!Hls.isSupported()) {
+                // Try native (Safari)
+                if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = src;
+                    video.style.display = 'block';
+                    overlay.className = 'vw-overlay';
+                    overlay.textContent = '';
+                    video.play().catch(() => {});
+                } else {
+                    overlay.textContent = 'HLS not supported in this browser';
+                    overlay.className = 'vw-overlay error';
+                }
+                return;
+            }
+
+            const hls = new Hls({
+                debug: false,
+                enableWorker: true,
+                lowLatencyMode: true,
+                backBufferLength: 8,
+                liveBackBufferLength: 8
+            });
+            state.hls = hls;
+
+            hls.loadSource(src);
+            hls.attachMedia(video);
+
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                state.mediaRecovery = 0;
+                video.style.display = 'block';
+                overlay.textContent = '';
+                overlay.className = 'vw-overlay';
+                status.style.display = 'none';
+                video.play().catch(() => {});
+            });
+
+            hls.on(Hls.Events.ERROR, function(event, data) {
+                if (!data.fatal) return;
+                switch (data.type) {
+                    case Hls.ErrorTypes.NETWORK_ERROR:
+                        status.textContent = 'Reconnecting…';
+                        status.style.display = 'block';
+                        hls.startLoad();
+                        break;
+                    case Hls.ErrorTypes.MEDIA_ERROR:
+                        if (state.mediaRecovery < 3) {
+                            state.mediaRecovery++;
+                            hls.recoverMediaError();
+                        } else if (!isTranscodeFallback) {
+                            // Native HLS couldn't decode (e.g. H.265) — start ABR H.264 transcode
+                            hls.destroy();
+                            state.hls = null;
+                            state.mediaRecovery = 0;
+                            overlay.textContent = 'Transcoding…';
+                            overlay.className = 'vw-overlay active';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
+                            fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' })
+                                .then(() => {
+                                    // Give FFmpeg ~6 s to produce the first segment
+                                    setTimeout(() => {
+                                        const abrSrc = `/hls/${encodeURIComponent(streamName)}/master.m3u8`;
+                                        _loadCellWithSrc(idx, streamName, abrSrc, true);
+                                    }, 6000);
+                                })
+                                .catch(() => setTimeout(() => loadCell(idx, streamName), 5000));
+                        } else {
+                            // Already on transcode path — just retry
+                            hls.destroy();
+                            state.hls = null;
+                            state.mediaRecovery = 0;
+                            setTimeout(() => loadCell(idx, streamName), 5000);
+                            status.textContent = 'Reloading…';
+                            status.style.display = 'block';
+                        }
+                        break;
+                    default:
+                        hls.destroy();
+                        state.hls = null;
+                        state.mediaRecovery = 0;
+                        setTimeout(() => loadCell(idx, streamName), 3000);
+                        status.textContent = 'Reloading…';
+                        status.style.display = 'block';
+                        break;
+                }
+            });
+        }
+
+        function populateSelects(streams) {
+            const options = streams.map(s => {
+                const opt = document.createElement('option');
+                opt.value = s.name;
+                opt.textContent = s.name + (s.ready ? '' : ' (offline)');
+                return opt;
+            });
+            cells.forEach(({ select }, idx) => {
+                const current = select.value;
+                // Remove all options except first (empty)
+                while (select.options.length > 1) select.remove(1);
+                options.forEach(opt => select.appendChild(opt.cloneNode(true)));
+                // Restore selection if still valid
+                if (current && streams.find(s => s.name === current)) {
+                    select.value = current;
+                } else {
+                    select.value = '';
+                }
+            });
+        }
+
+        async function fetchStreams() {
+            try {
+                const resp = await fetch('/api/streams');
+                if (!resp.ok) return [];
+                return await resp.json();
+            } catch {
+                return [];
+            }
+        }
+
+        async function init() {
+            // Restore saved layout (or default 2x2)
+            const saved = loadState();
+            if (saved && (saved.layout === 2 || saved.layout === 3)) {
+                COLS = saved.layout;
+                CELL_COUNT = COLS * COLS;
+                document.getElementById('btn-2x2').classList.toggle('active', COLS === 2);
+                document.getElementById('btn-3x3').classList.toggle('active', COLS === 3);
+            }
+
+            // Set initial grid dimensions
+            const grid = document.getElementById('videowall-grid');
+            grid.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
+            grid.style.gridTemplateRows = `repeat(${COLS}, 1fr)`;
+
+            buildGrid();
+            lastStreams = await fetchStreams();
+            populateSelects(lastStreams);
+
+            // Restore saved cell assignments
+            if (saved && saved.cells) {
+                for (let i = 0; i < Math.min(saved.cells.length, cells.length); i++) {
+                    const name = saved.cells[i];
+                    if (name && lastStreams.find(s => s.name === name)) {
+                        cells[i].select.value = name;
+                        loadCell(i, name);
+                    }
+                }
+            }
+
+            // Real-time stream list updates via WebSocket events
+            const refreshStreams = async () => {
+                lastStreams = await fetchStreams();
+                populateSelects(lastStreams);
+            };
+            try {
+                const socket = io({ transports: ['websocket', 'polling'] });
+                socket.on('message', (msg) => {
+                    const t = msg && msg.type;
+                    if (t === 'stream_created' || t === 'stream_deleted' ||
+                        t === 'stream_stopped' || t === 'pull_stream_started') {
+                        refreshStreams();
+                    }
+                });
+            } catch (e) { /* socket.io unavailable, fallback poll covers it */ }
+            // Fallback poll every 30s in case WS events are missed
+            setInterval(refreshStreams, 30000);
+        }
+
+        // Official hls.js workaround (issues #5306, #7127):
+        // stopLoad() on hide prevents Chrome/Firefox from pausing playback due to
+        // MSE duration updates in background tabs. On return, restart from live edge.
+        document.addEventListener('visibilitychange', () => {
+            cells.forEach(({ state, video }) => {
+                if (!state.hls) return;
+                if (document.hidden) {
+                    state.hls.stopLoad();
+                } else {
+                    state.hls.startLoad(-1);
+                    setTimeout(() => {
+                        if (state.hls && state.hls.liveSyncPosition != null) {
+                            video.currentTime = state.hls.liveSyncPosition;
+                        }
+                        video.play().catch(() => {});
+                    }, 100);
+                }
+            });
+        });
+        window.addEventListener('focus', () => {
+            cells.forEach(({ state, video }) => {
+                if (!state.hls) return;
+                state.hls.startLoad(-1);
+                setTimeout(() => {
+                    if (state.hls && state.hls.liveSyncPosition != null) {
+                        video.currentTime = state.hls.liveSyncPosition;
+                    }
+                    video.play().catch(() => {});
+                }, 100);
+            });
+        });
+
+        // Logout handler
+        document.addEventListener('DOMContentLoaded', () => {
+            const logoutLink = document.getElementById('logout-link');
+            if (logoutLink) {
+                logoutLink.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+                    window.location.href = '/login';
+                });
+            }
+        });
+
+        window.setLayout = setLayout;
+
+        init();
+    })();
+    </script>
+</body>
+</html>

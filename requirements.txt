@@ -1,0 +1,30 @@
+# Core dependencies for TAK Video Restreamer
+Flask==3.0.0
+Flask-SocketIO==5.3.5
+Flask-CORS==4.0.0
+Flask-Login==0.6.3
+Flask-Limiter==3.5.0
+python-socketio==5.10.0
+requests==2.31.0
+python-engineio==4.8.0
+eventlet==0.35.1
+gunicorn==21.2.0
+klvdata>=0.0.3
+
+# Test dependencies for TAK Video Restreamer
+
+# Core testing framework
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Mocking and fixtures
+pytest-mock==3.12.0
+
+# Flask testing
+flask-testing==0.8.1
+
+# HTTP testing
+requests-mock==1.11.0
+
+# Async testing (for WebSocket tests)
+pytest-asyncio==0.21.1

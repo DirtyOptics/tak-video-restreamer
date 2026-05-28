@@ -1,0 +1,1195 @@
+<!--
+This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.
+ Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Video Restreamer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">Dashboard</a>
+                    <a href="/recordings" class="nav-link">Recordings</a>
+                    <a href="/utils" class="nav-link">Utils</a>
+                    <a href="/test" class="nav-link">Test Video</a>
+                    <a href="/videowall" class="nav-link">Video Wall</a>
+                    <a href="/settings" class="nav-link active">Settings</a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <!-- Recording Settings -->
+            <section class="card">
+                <h2>Recording Settings</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="auto-record-checkbox" class="setting-checkbox">
+                        Auto-record New Streams
+                    </label>
+                    <small>Automatically start recording when new inbound streams are detected</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="segmented-recording" class="setting-checkbox">
+                        Enable Segmented Recording
+                    </label>
+                    <small>Split recordings into segments to limit file size and improve recovery</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="segment-duration">Segment Duration (minutes)</label>
+                    <input type="number" id="segment-duration" min="1" max="60" value="10">
+                    <small>Length of each recording segment</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="max-file-size">Max File Size (GB)</label>
+                    <input type="number" id="max-file-size" min="1" max="100" value="10">
+                    <small>Stop recording when file reaches this size</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="auto-cleanup" class="setting-checkbox">
+                        Auto Cleanup Old Recordings
+                    </label>
+                    <small>Automatically delete recordings older than specified days</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="cleanup-days">Keep Recordings For (days)</label>
+                    <input type="number" id="cleanup-days" min="1" max="365" value="30">
+                    <small>Recordings older than this will be automatically deleted</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="min-free-space">Minimum Free Space (GB)</label>
+                    <input type="number" id="min-free-space" min="1" max="1000" value="10">
+                    <small>Stop recording when free space drops below this threshold</small>
+                </div>
+            </section>
+
+            <!-- Stream Recovery Settings -->
+            <section class="card">
+                <h2>Stream Recovery Settings</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="auto-reconnect" class="setting-checkbox">
+                        Auto Reconnect on Failure
+                    </label>
+                    <small>Automatically retry failed pull streams</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="reconnect-delay">Reconnect Delay (seconds)</label>
+                    <input type="number" id="reconnect-delay" min="1" max="60" value="5">
+                    <small>Wait time before retrying a failed pull stream connection</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="max-reconnect-attempts">Max Reconnect Attempts</label>
+                    <input type="number" id="max-reconnect-attempts" min="-1" max="100" value="-1">
+                    <small>-1 = unlimited retries</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="exponential-backoff" class="setting-checkbox">
+                        Exponential Backoff
+                    </label>
+                    <small>Increase delay between retries</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="max-backoff-delay">Max Backoff Delay (seconds)</label>
+                    <input type="number" id="max-backoff-delay" min="10" max="300" value="60">
+                </div>
+            </section>
+
+            <!-- Health Monitoring -->
+            <section class="card">
+                <h2>Health Monitoring</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="health-check-enabled" class="setting-checkbox">
+                        Enable Health Checks
+                    </label>
+                    <small>Periodically verify stream and service health</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="stall-detection-enabled" class="setting-checkbox">
+                        Enable Stall Detection
+                    </label>
+                    <small>Detect when streams stop producing data</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="stall-threshold">Stall Threshold (seconds)</label>
+                    <input type="number" id="stall-threshold" min="5" max="300" value="30">
+                    <small>Mark a stream as stalled if no data is received for this duration</small>
+                </div>
+            </section>
+
+            <!-- Network Resilience -->
+            <section class="card">
+                <h2>Network Resilience</h2>
+                <div class="form-group">
+                    <label for="rtsp-transport">RTSP Transport</label>
+                    <select id="rtsp-transport">
+                        <option value="tcp">TCP (Reliable)</option>
+                        <option value="udp">UDP (Low Latency)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="connection-timeout">Connection Timeout (seconds)</label>
+                    <input type="number" id="connection-timeout" min="1" max="30" value="5">
+                    <small>How long to wait for an RTSP/SRT connection before timing out</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enable-ffmpeg-reconnect" class="setting-checkbox">
+                        Enable FFmpeg Auto-Reconnect
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label for="pull-stream-buffer-size">Pull Stream Buffer Size (MB)</label>
+                    <input type="number" id="pull-stream-buffer-size" min="1" max="100" step="1" value="10" readonly>
+                    <small>Buffer size for pull streams to handle packet loss. Current value shown (requires env var PULL_STREAM_BUFFER_SIZE and container restart to change)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="pull-stream-max-delay">Pull Stream Max Delay (seconds)</label>
+                    <input type="number" id="pull-stream-max-delay" min="1" max="60" step="1" value="10" readonly>
+                    <small>Maximum buffering delay for pull streams. Current value shown (requires env var PULL_STREAM_MAX_DELAY and container restart to change)</small>
+                </div>
+                
+                <div style="padding: 0.75rem; background: rgba(59, 130, 246, 0.1); border-radius: 6px; border: 1px solid var(--accent-primary); margin-top: 1rem;">
+                    <strong style="color: var(--accent-primary);">ℹ️ Note:</strong>
+                    <p style="color: var(--text-secondary); margin: 0.5rem 0 0 0; font-size: 0.85em;">
+                        To change buffer settings, add to docker-compose.yml:<br>
+                        <code style="background: var(--surface-bg); padding: 0.25rem 0.5rem; border-radius: 4px; display: block; margin-top: 0.5rem; color: var(--text-primary); font-size: 0.8em;">
+environment:<br>
+&nbsp;&nbsp;- PULL_STREAM_BUFFER_SIZE=20971520  # 20MB<br>
+&nbsp;&nbsp;- PULL_STREAM_MAX_DELAY=15000000    # 15 sec
+                        </code>
+                        Then restart: <code style="background: var(--surface-bg); padding: 0.2rem 0.4rem; border-radius: 4px; color: var(--text-primary);">docker-compose up -d</code>
+                    </p>
+                </div>
+            </section>
+
+            <!-- TLS/RTSPS Settings - Disabled/Stubbed
+            <section class="card">
+                <h2>TLS/RTSPS Settings</h2>
+
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">NOTE: This feature is currlenty stubbed. TAK may or may not support this feature at this time.</p>
+
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">Manage TLS certificates for RTSPS (RTSP over TLS) on port 8555.</p>
+                
+                <div id="cert-status" style="padding: 1rem; background: var(--surface-bg); border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                    <strong style="color: var(--text-primary);">Current Certificate Status:</strong>
+                    <div id="cert-info" style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.9em;">
+                        Loading...
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="cert-file">Upload Certificate (.crt, .pem)</label>
+                    <input type="file" id="cert-file" accept=".crt,.pem,.cer">
+                    <small>PEM-formatted certificate file</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="key-file">Upload Private Key (.key, .pem)</label>
+                    <input type="file" id="key-file" accept=".key,.pem">
+                    <small>PEM-formatted private key file (keep secure!)</small>
+                </div>
+
+                <button id="upload-cert-btn" class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;">
+                    Upload Certificates
+                </button>
+
+                <button id="generate-self-signed-btn" class="btn btn-secondary" style="width: 100%; margin-bottom: 1rem;">
+                    Generate Self-Signed Certificate
+                </button>
+
+                <div style="padding: 1rem; background: rgba(245, 158, 11, 0.1); border-radius: 8px; border: 1px solid var(--accent-warning); margin-top: 1rem;">
+                    <strong style="color: var(--accent-warning);">⚠️ Security Note:</strong>
+                    <p style="color: var(--text-secondary); margin: 0.5rem 0 0 0; font-size: 0.9em;">
+                        After uploading certificates, restart the container for changes to take effect:<br>
+                        <code style="background: var(--surface-bg); padding: 0.2rem 0.5rem; border-radius: 4px; display: inline-block; margin-top: 0.5rem; color: var(--text-primary);">docker-compose restart</code>
+                    </p>
+                </div>
+            </section>
+            -->
+
+            <!-- ABR HLS Settings -->
+            <section class="card">
+                <h2>ABR HLS Transcoding</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9em;">
+                    Configure adaptive bitrate renditions for HLS streaming. Each tier is a separate encode — more tiers = more CPU.
+                    Players automatically switch between tiers based on viewer bandwidth.
+                </p>
+
+                <!-- High Tier -->
+                <div style="padding: 0.75rem; background: var(--surface-bg); border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                    <h3 style="margin: 0 0 0.75rem 0; color: var(--accent-success); font-size: 1em;">▲ High Quality</h3>
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label for="abr-high-resolution">Resolution</label>
+                        <select id="abr-high-resolution"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label for="abr-high-bitrate">Video Bitrate</label>
+                        <select id="abr-high-bitrate"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="abr-high-audio">Audio Bitrate</label>
+                        <select id="abr-high-audio"></select>
+                    </div>
+                </div>
+
+                <!-- Medium Tier (optional) -->
+                <div style="padding: 0.75rem; background: var(--surface-bg); border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <h3 style="margin: 0; color: var(--accent-warning); font-size: 1em;">◆ Medium Quality</h3>
+                        <label style="margin-left: auto; font-size: 0.85em; display: flex; align-items: center; gap: 0.4rem;">
+                            <input type="checkbox" id="abr-medium-enabled" class="setting-checkbox">
+                            Enable
+                        </label>
+                    </div>
+                    <div id="abr-medium-fields">
+                        <div class="form-group" style="margin-bottom: 0.5rem;">
+                            <label for="abr-medium-resolution">Resolution</label>
+                            <select id="abr-medium-resolution"></select>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0.5rem;">
+                            <label for="abr-medium-bitrate">Video Bitrate</label>
+                            <select id="abr-medium-bitrate"></select>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="abr-medium-audio">Audio Bitrate</label>
+                            <select id="abr-medium-audio"></select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Low Tier -->
+                <div style="padding: 0.75rem; background: var(--surface-bg); border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                    <h3 style="margin: 0 0 0.75rem 0; color: var(--accent-primary); font-size: 1em;">▼ Low Quality</h3>
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label for="abr-low-resolution">Resolution</label>
+                        <select id="abr-low-resolution"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label for="abr-low-bitrate">Video Bitrate</label>
+                        <select id="abr-low-bitrate"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="abr-low-audio">Audio Bitrate</label>
+                        <select id="abr-low-audio"></select>
+                    </div>
+                </div>
+
+                <button id="save-abr-settings-btn" class="btn btn-primary" style="width: 100%;">
+                    Save ABR Settings
+                </button>
+                <div id="abr-status-msg" style="display: none; margin-top: 0.75rem; padding: 0.75rem; border-radius: 6px; font-size: 0.9em;"></div>
+
+                <div style="padding: 0.75rem; background: rgba(59, 130, 246, 0.1); border-radius: 6px; border: 1px solid var(--accent-primary); margin-top: 1rem;">
+                    <strong style="color: var(--accent-primary);">ℹ️ CPU Impact:</strong>
+                    <p style="color: var(--text-secondary); margin: 0.5rem 0 0 0; font-size: 0.85em;">
+                        Each rendition tier runs a separate x264 encode. 2 tiers (High + Low) is recommended for most deployments.
+                        Enable Medium only if you have sufficient CPU headroom. Changes take effect on the next ABR start or restart running ABR processes immediately.
+                    </p>
+                </div>
+            </section>
+
+            <!-- SRT Settings -->
+            <section class="card">
+                <h2>SRT Settings</h2>
+                <p style="color: #666; margin-bottom: 0.5rem;"><strong>Note:</strong> SRT settings are applied via URL parameters in your streaming client, not on the server.</p>
+                <p style="color: #666; margin-bottom: 1rem; font-size: 0.9em;">After saving, an example URL will be generated with your settings that you can use in ATAK or other SRT clients.</p>
+                
+                <div class="form-group">
+                    <label for="srt-latency">SRT Latency (milliseconds)</label>
+                    <input type="number" id="srt-latency" min="20" max="8000" value="120">
+                    <small>Buffer time to compensate for network jitter (20-8000ms). Higher = more reliable, lower = less delay. URL param: <code>latency</code></small>
+                </div>
+
+                <div class="form-group">
+                    <label for="srt-max-bandwidth">Max Bandwidth (Mbps)</label>
+                    <input type="number" id="srt-max-bandwidth" min="0" max="10000" value="0">
+                    <small>Maximum transmission bandwidth in Mbps. 0 = unlimited. URL param: <code>maxbw</code></small>
+                </div>
+
+                <div class="form-group">
+                    <label for="srt-transtype">Transmission Type</label>
+                    <select id="srt-transtype">
+                        <option value="live">Live (Real-time Priority)</option>
+                        <option value="file">File (Reliable Delivery)</option>
+                    </select>
+                    <small>Live: Drop old packets to prioritize real-time. File: Ensure all packets arrive. URL param: <code>transtype</code></small>
+                </div>
+
+                <div class="form-group">
+                    <label for="srt-encryption">Encryption</label>
+                    <select id="srt-encryption">
+                        <option value="0">None</option>
+                        <option value="16">AES-128 (16 bytes)</option>
+                        <option value="24">AES-192 (24 bytes)</option>
+                        <option value="32">AES-256 (32 bytes)</option>
+                    </select>
+                    <small>Enable AES encryption for SRT streams. Sender and receiver must match. URL param: <code>pbkeylen</code></small>
+                </div>
+
+                <div class="form-group" id="srt-passphrase-group" style="display: none;">
+                    <label for="srt-passphrase">Encryption Passphrase</label>
+                    <input type="password" id="srt-passphrase" minlength="10" maxlength="79" placeholder="10-79 characters">
+                    <small>Required when encryption is enabled. URL param: <code>passphrase</code></small>
+                </div>
+
+                <div class="form-group">
+                    <label for="srt-connection-timeout">Connection Timeout (ms)</label>
+                    <input type="number" id="srt-connection-timeout" min="1000" max="30000" value="3000">
+                    <small>Time to wait for initial SRT connection handshake. URL param: <code>conntimeo</code></small>
+                </div>
+
+                <div class="form-group">
+                    <label for="srt-peer-idle-timeout">Peer Idle Timeout (ms)</label>
+                    <input type="number" id="srt-peer-idle-timeout" min="1000" max="60000" value="5000">
+                    <small>Disconnect if no data received for this duration. URL param: <code>peeridletimeo</code></small>
+                </div>
+
+                <button id="save-srt-settings-btn" class="btn btn-primary" style="margin-top: 1rem;">
+                    Save & Generate URL
+                </button>
+                
+                <div id="srt-example-url" style="display: none; margin-top: 1rem; padding: 1rem; background: rgba(59, 130, 246, 0.1); border-radius: 8px; border: 1px solid var(--accent-primary);">
+                    <strong style="color: var(--accent-primary);">Example SRT URL:</strong>
+                    <code id="srt-url-text" style="display: block; margin-top: 0.5rem; padding: 0.5rem; background: var(--surface-bg); border-radius: 4px; word-break: break-all; font-size: 0.85em; color: var(--text-primary);"></code>
+                    <button id="copy-srt-url-btn" class="btn btn-secondary" style="margin-top: 0.5rem; width: 100%;">Copy URL Pattern</button>
+                </div>
+            </section>
+
+            <!-- Save Button -->
+            <section class="card">
+                <button id="save-settings-btn" class="btn btn-primary">
+                    Save Settings
+                </button>
+                <button id="reset-settings-btn" class="btn btn-secondary" style="margin-top: 1rem;">
+                    Reset to Defaults
+                </button>
+            </section>
+
+            <!-- Stream Standby / Persistence -->
+            <section class="card">
+                <h2>Stream Standby</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9em;">
+                    Keep streams in a "standby" state after publisher disconnects so they reappear instantly on reconnect.
+                </p>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="standby-enabled" class="setting-checkbox">
+                        Enable Stream Standby
+                    </label>
+                    <small>Track streams after publisher disconnects</small>
+                </div>
+                <div class="form-group">
+                    <label for="standby-timeout">Standby Timeout (minutes)</label>
+                    <input type="number" id="standby-timeout" min="0" max="14400" value="60">
+                    <small>0 = never expire (infinite standby)</small>
+                </div>
+                <div id="standby-streams-list" style="margin-top: 1rem;"></div>
+            </section>
+
+            <!-- TLS / RTSPS Settings -->
+            <section class="card">
+                <h2>TLS / RTSPS / HTTPS</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9em;">
+                    Manage certificates for encrypted RTSP (RTSPS on port 8555) and optional HTTPS for the web UI.
+                </p>
+
+                <div id="tls-cert-status" style="padding: 0.75rem; background: var(--surface-bg); border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                    <strong>Certificate Status:</strong>
+                    <div id="tls-cert-info" style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.9em;">Loading...</div>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="tls-rtsps-enabled" class="setting-checkbox">
+                        Enable RTSPS (port 8555)
+                    </label>
+                    <small>Requires restart after changing</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="tls-https-enabled" class="setting-checkbox">
+                        Enable HTTPS for Web UI
+                    </label>
+                    <small>Disabled by default. Requires restart + HTTPS_ENABLED=true in docker-compose</small>
+                </div>
+
+                <h3 style="margin: 1.5rem 0 0.75rem; font-size: 0.95em; color: var(--text-primary);">Generate Certificate</h3>
+
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                    <button id="gen-self-signed-btn" class="btn btn-secondary" style="flex: 1;">Generate Self-Signed</button>
+                </div>
+
+                <h3 style="margin: 0.5rem 0 0.75rem; font-size: 0.95em; color: var(--text-primary);">Let's Encrypt</h3>
+                <div class="form-group">
+                    <label for="le-domain">Domain</label>
+                    <input type="text" id="le-domain" placeholder="video.example.com">
+                    <small>Must point to this server. Port 80 must be accessible from the internet.</small>
+                </div>
+                <div class="form-group">
+                    <label for="le-email">Email</label>
+                    <input type="email" id="le-email" placeholder="admin@example.com">
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button id="le-request-btn" class="btn btn-primary" style="flex: 1;">Request Certificate</button>
+                    <button id="le-renew-btn" class="btn btn-secondary" style="flex: 1;">Renew</button>
+                </div>
+
+                <h3 style="margin: 1.5rem 0 0.75rem; font-size: 0.95em; color: var(--text-primary);">Upload Custom Certificate</h3>
+                <div class="form-group">
+                    <label for="tls-cert-file">Certificate (.crt, .pem)</label>
+                    <input type="file" id="tls-cert-file" accept=".crt,.pem,.cer">
+                </div>
+                <div class="form-group">
+                    <label for="tls-key-file">Private Key (.key, .pem)</label>
+                    <input type="file" id="tls-key-file" accept=".key,.pem">
+                </div>
+                <button id="tls-upload-btn" class="btn btn-secondary" style="width: 100%;">Upload Certificates</button>
+
+                <button id="save-tls-settings-btn" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Save TLS Settings</button>
+            </section>
+
+            <!-- API Keys -->
+            <section class="card">
+                <h2>API Keys</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9em;">
+                    Generate API keys for headless/programmatic access. Send via <code>X-API-Key</code> header.
+                </p>
+                <div class="form-group">
+                    <label for="new-key-name">Key Name</label>
+                    <input type="text" id="new-key-name" placeholder="e.g. automation-script" maxlength="64">
+                </div>
+                <button id="gen-api-key-btn" class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;">Generate API Key</button>
+                <div id="new-key-display" style="display: none; padding: 0.75rem; background: rgba(16, 185, 129, 0.15); border: 1px solid var(--accent-success); border-radius: 8px; margin-bottom: 1rem;">
+                    <strong style="color: var(--accent-success);">New Key (copy now — shown only once):</strong>
+                    <code id="new-key-value" style="display: block; margin-top: 0.5rem; padding: 0.5rem; background: var(--surface-bg); border-radius: 4px; word-break: break-all; font-size: 0.85em;"></code>
+                    <button id="copy-api-key-btn" class="btn btn-secondary" style="margin-top: 0.5rem; width: 100%;">Copy Key</button>
+                </div>
+                <div id="api-keys-list" style="margin-top: 0.5rem;"></div>
+            </section>
+
+            <!-- Audit Log -->
+            <section class="card">
+                <h2>Audit Log</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 0.75rem; font-size: 0.9em;">Recent authentication and configuration events.</p>
+                <button id="refresh-audit-btn" class="btn btn-secondary" style="margin-bottom: 1rem;">Refresh</button>
+                <div id="audit-log-entries" style="max-height: 300px; overflow-y: auto; background: var(--surface-bg); border-radius: 8px; padding: 0.75rem; font-family: var(--font-mono); font-size: 0.8em; color: var(--text-secondary); white-space: pre-wrap;">Loading...</div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        let currentSettings = {};
+        let currentSRTSettings = {};
+        let currentABRSettings = {};
+
+        // ------------------------------------------------------------------
+        // ABR Settings
+        // ------------------------------------------------------------------
+        function populateSelect(selectId, options, valueKey, labelKey, selectedValue) {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+            select.innerHTML = '';
+            options.forEach(opt => {
+                const el = document.createElement('option');
+                el.value = opt[valueKey];
+                el.textContent = opt[labelKey];
+                if (String(opt[valueKey]) === String(selectedValue)) {
+                    el.selected = true;
+                }
+                select.appendChild(el);
+            });
+        }
+
+        function toggleMediumFields() {
+            const enabled = document.getElementById('abr-medium-enabled').checked;
+            const fields = document.getElementById('abr-medium-fields');
+            if (fields) {
+                fields.style.opacity = enabled ? '1' : '0.4';
+                fields.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+        }
+
+        async function loadABRSettings() {
+            try {
+                const response = await fetch('/api/settings/abr');
+                if (!response.ok) return;
+                const data = await response.json();
+                currentABRSettings = data.settings;
+                const opts = data.options;
+
+                // Populate dropdowns for each tier
+                for (const tier of ['high', 'medium', 'low']) {
+                    const cfg = currentABRSettings[tier] || {};
+                    populateSelect(`abr-${tier}-resolution`, opts.resolutions, 'value', 'label', cfg.resolution || '1280x720');
+                    populateSelect(`abr-${tier}-bitrate`, opts.bitrates, 'value', 'label', cfg.bitrate || 2500);
+                    populateSelect(`abr-${tier}-audio`, opts.audio_bitrates, 'value', 'label', cfg.audio_bitrate || 128);
+                }
+
+                // Medium enabled checkbox
+                document.getElementById('abr-medium-enabled').checked = !!currentABRSettings.medium_enabled;
+                toggleMediumFields();
+            } catch (error) {
+                console.error('Error loading ABR settings:', error);
+            }
+        }
+
+        async function saveABRSettings() {
+            try {
+                const settings = {
+                    medium_enabled: document.getElementById('abr-medium-enabled').checked,
+                    high: {
+                        resolution: document.getElementById('abr-high-resolution').value,
+                        bitrate: parseInt(document.getElementById('abr-high-bitrate').value),
+                        audio_bitrate: parseInt(document.getElementById('abr-high-audio').value),
+                    },
+                    medium: {
+                        resolution: document.getElementById('abr-medium-resolution').value,
+                        bitrate: parseInt(document.getElementById('abr-medium-bitrate').value),
+                        audio_bitrate: parseInt(document.getElementById('abr-medium-audio').value),
+                    },
+                    low: {
+                        resolution: document.getElementById('abr-low-resolution').value,
+                        bitrate: parseInt(document.getElementById('abr-low-bitrate').value),
+                        audio_bitrate: parseInt(document.getElementById('abr-low-audio').value),
+                    }
+                };
+
+                const response = await fetch('/api/settings/abr', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showNotification(data.message || 'ABR settings saved', 'success');
+                    currentABRSettings = data.settings;
+                } else {
+                    showNotification(data.error || 'Failed to save ABR settings', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving ABR settings:', error);
+                showNotification('Failed to save ABR settings', 'error');
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Stream Standby
+        // ------------------------------------------------------------------
+        async function loadStandbySettings() {
+            try {
+                const response = await fetch('/api/settings');
+                if (!response.ok) return;
+                const data = await response.json();
+                const s = data.settings;
+                document.getElementById('standby-enabled').checked = !!s.standby_enabled;
+                document.getElementById('standby-timeout').value = s.standby_timeout_minutes ?? 60;
+
+                // Load standby stream list
+                const listResp = await fetch('/api/streams');
+                if (listResp.ok) {
+                    const streams = await listResp.json();
+                    renderStandbyStreams(streams);
+                }
+            } catch (e) { console.error('Error loading standby settings:', e); }
+        }
+
+        function renderStandbyStreams(streams) {
+            const container = document.getElementById('standby-streams-list');
+            if (!container) return;
+            // Filter to streams that have standby info (not currently live)
+            const items = (streams || []).filter(s => s.standby || s.status === 'standby');
+            if (items.length === 0) {
+                container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85em;">No streams currently on standby.</div>';
+                return;
+            }
+            let html = '<h3 style="font-size: 0.9em; margin-bottom: 0.5rem;">Standby Streams</h3>';
+            items.forEach(s => {
+                html += `<div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: var(--surface-bg); border-radius: 6px; margin-bottom: 0.25rem;">
+                    <span style="font-size: 0.85em;">${s.name || s.stream_name}</span>
+                    <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75em; color: var(--accent-danger);" onclick="removeStandbyStream('${s.name || s.stream_name}')">Remove</button>
+                </div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        async function removeStandbyStream(name) {
+            try {
+                const response = await fetch(`/api/streams/${name}/standby`, { method: 'DELETE' });
+                if (response.ok) {
+                    showNotification(`Removed ${name} from standby`, 'success');
+                    loadStandbySettings();
+                } else {
+                    showNotification('Failed to remove stream', 'error');
+                }
+            } catch (e) { showNotification('Error removing stream', 'error'); }
+        }
+
+        async function saveStandbySettings() {
+            try {
+                const settings = {
+                    standby_enabled: document.getElementById('standby-enabled').checked,
+                    standby_timeout_minutes: parseInt(document.getElementById('standby-timeout').value) || 0
+                };
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+                if (response.ok) {
+                    showNotification('Standby settings saved', 'success');
+                } else {
+                    showNotification('Failed to save standby settings', 'error');
+                }
+            } catch (e) { showNotification('Error saving standby settings', 'error'); }
+        }
+
+        // ------------------------------------------------------------------
+        // TLS / RTSPS / HTTPS
+        // ------------------------------------------------------------------
+        async function loadTLSSettings() {
+            try {
+                const [settingsResp, statusResp] = await Promise.all([
+                    fetch('/api/tls/settings'),
+                    fetch('/api/tls/cert-status')
+                ]);
+                if (settingsResp.ok) {
+                    const data = await settingsResp.json();
+                    document.getElementById('tls-rtsps-enabled').checked = !!data.rtsps_enabled;
+                    document.getElementById('tls-https-enabled').checked = !!data.https_enabled;
+                    if (data.letsencrypt_domain) document.getElementById('le-domain').value = data.letsencrypt_domain;
+                    if (data.letsencrypt_email) document.getElementById('le-email').value = data.letsencrypt_email;
+                }
+                if (statusResp.ok) {
+                    const status = await statusResp.json();
+                    const el = document.getElementById('tls-cert-info');
+                    if (status.has_cert) {
+                        let html = `<div style="color: var(--accent-success);">&#10003; Certificate installed (${status.cert_type || 'unknown'})</div>`;
+                        if (status.subject) html += `<div>Subject: ${status.subject}</div>`;
+                        if (status.issuer) html += `<div>Issuer: ${status.issuer}</div>`;
+                        if (status.expires) html += `<div>Expires: ${status.expires}</div>`;
+                        el.innerHTML = html;
+                    } else {
+                        el.innerHTML = '<div style="color: var(--accent-warning);">&#9888; No certificate installed</div>';
+                    }
+                }
+            } catch (e) { console.error('Error loading TLS settings:', e); }
+        }
+
+        async function saveTLSSettings() {
+            try {
+                const body = {
+                    rtsps_enabled: document.getElementById('tls-rtsps-enabled').checked,
+                    https_enabled: document.getElementById('tls-https-enabled').checked,
+                    letsencrypt_domain: document.getElementById('le-domain').value.trim(),
+                    letsencrypt_email: document.getElementById('le-email').value.trim()
+                };
+                const resp = await fetch('/api/tls/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+                showNotification(resp.ok ? 'TLS settings saved' : (data.error || 'Error'), resp.ok ? 'success' : 'error');
+            } catch (e) { showNotification('Error saving TLS settings', 'error'); }
+        }
+
+        async function generateSelfSigned() {
+            if (!confirm('Generate a new self-signed certificate? This replaces any existing certificate.')) return;
+            try {
+                const resp = await fetch('/api/tls/self-signed', { method: 'POST' });
+                const data = await resp.json();
+                showNotification(data.message || data.error, resp.ok ? 'success' : 'error');
+                if (resp.ok) loadTLSSettings();
+            } catch (e) { showNotification('Error generating certificate', 'error'); }
+        }
+
+        async function requestLetsEncrypt() {
+            const domain = document.getElementById('le-domain').value.trim();
+            const email = document.getElementById('le-email').value.trim();
+            if (!domain) { showNotification('Domain is required', 'error'); return; }
+            if (!email) { showNotification('Email is required', 'error'); return; }
+            try {
+                const resp = await fetch('/api/tls/letsencrypt', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ domain, email })
+                });
+                const data = await resp.json();
+                showNotification(data.message || data.error, resp.ok ? 'success' : 'error');
+                if (resp.ok) loadTLSSettings();
+            } catch (e) { showNotification('Error requesting certificate', 'error'); }
+        }
+
+        async function renewLetsEncrypt() {
+            try {
+                const resp = await fetch('/api/tls/renew', { method: 'POST' });
+                const data = await resp.json();
+                showNotification(data.message || data.error, resp.ok ? 'success' : 'error');
+                if (resp.ok) loadTLSSettings();
+            } catch (e) { showNotification('Error renewing certificate', 'error'); }
+        }
+
+        async function uploadTLSCerts() {
+            const certFile = document.getElementById('tls-cert-file').files[0];
+            const keyFile = document.getElementById('tls-key-file').files[0];
+            if (!certFile || !keyFile) { showNotification('Select both certificate and key files', 'error'); return; }
+            const formData = new FormData();
+            formData.append('cert', certFile);
+            formData.append('key', keyFile);
+            try {
+                const resp = await fetch('/api/tls/upload', { method: 'POST', body: formData });
+                const data = await resp.json();
+                showNotification(data.message || data.error, resp.ok ? 'success' : 'error');
+                if (resp.ok) {
+                    loadTLSSettings();
+                    document.getElementById('tls-cert-file').value = '';
+                    document.getElementById('tls-key-file').value = '';
+                }
+            } catch (e) { showNotification('Error uploading certificates', 'error'); }
+        }
+
+        // ------------------------------------------------------------------
+        // API Keys
+        // ------------------------------------------------------------------
+        async function loadAPIKeys() {
+            try {
+                const resp = await fetch('/api/auth/keys');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const container = document.getElementById('api-keys-list');
+                if (!data.keys || data.keys.length === 0) {
+                    container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85em;">No API keys configured.</div>';
+                    return;
+                }
+                let html = '';
+                data.keys.forEach(k => {
+                    html += `<div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: var(--surface-bg); border-radius: 6px; margin-bottom: 0.25rem;">
+                        <div>
+                            <strong style="font-size: 0.85em;">${k.name}</strong>
+                            <span style="font-size: 0.75em; color: var(--text-secondary); margin-left: 0.5rem;">${k.created || ''}</span>
+                            <div style="font-size: 0.7em; color: var(--text-secondary); font-family: var(--font-mono);">${k.key_hash ? k.key_hash.substring(0, 16) + '...' : ''}</div>
+                        </div>
+                        <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75em; color: var(--accent-danger);" onclick="revokeAPIKey('${k.key_hash || ''}')">Revoke</button>
+                    </div>`;
+                });
+                container.innerHTML = html;
+            } catch (e) { console.error('Error loading API keys:', e); }
+        }
+
+        async function generateAPIKey() {
+            const name = document.getElementById('new-key-name').value.trim();
+            if (!name) { showNotification('Enter a key name', 'error'); return; }
+            try {
+                const resp = await fetch('/api/auth/keys', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    document.getElementById('new-key-value').textContent = data.api_key;
+                    document.getElementById('new-key-display').style.display = 'block';
+                    document.getElementById('new-key-name').value = '';
+                    showNotification('API key generated — copy it now!', 'success');
+                    loadAPIKeys();
+                } else {
+                    showNotification(data.error || 'Failed to generate key', 'error');
+                }
+            } catch (e) { showNotification('Error generating API key', 'error'); }
+        }
+
+        async function revokeAPIKey(keyHash) {
+            if (!confirm('Revoke this API key? This cannot be undone.')) return;
+            try {
+                const resp = await fetch(`/api/auth/keys/${keyHash}`, { method: 'DELETE' });
+                const data = await resp.json();
+                showNotification(data.message || data.error, resp.ok ? 'success' : 'error');
+                loadAPIKeys();
+            } catch (e) { showNotification('Error revoking key', 'error'); }
+        }
+
+        function copyAPIKey() {
+            const key = document.getElementById('new-key-value').textContent;
+            navigator.clipboard.writeText(key).then(() => {
+                showNotification('API key copied!', 'success');
+            }).catch(() => showNotification('Failed to copy', 'error'));
+        }
+
+        // ------------------------------------------------------------------
+        // Audit Log
+        // ------------------------------------------------------------------
+        async function loadAuditLog() {
+            try {
+                const resp = await fetch('/api/audit?lines=100');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const container = document.getElementById('audit-log-entries');
+                if (!data.entries || data.entries.length === 0) {
+                    container.textContent = 'No audit log entries yet.';
+                    return;
+                }
+                container.textContent = data.entries.join('\n');
+                container.scrollTop = container.scrollHeight;
+            } catch (e) { console.error('Error loading audit log:', e); }
+        }
+
+        // ------------------------------------------------------------------
+        // Logout
+        // ------------------------------------------------------------------
+        async function doLogout() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+            } catch (e) {}
+            window.location.href = '/login';
+        }
+
+        // ------------------------------------------------------------------
+        // Default password warning
+        // ------------------------------------------------------------------
+        async function checkDefaultPassword() {
+            try {
+                const resp = await fetch('/api/auth/status');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.default_credentials) {
+                    const banner = document.createElement('div');
+                    banner.innerHTML = '&#9888; <strong>Security Warning:</strong> You are using the default password. Change it via ADMIN_PASSWORD environment variable and restart the container.';
+                    Object.assign(banner.style, {
+                        position: 'fixed', top: '0', left: '0', right: '0',
+                        padding: '0.75rem 1rem', background: '#f59e0b', color: '#000',
+                        textAlign: 'center', zIndex: '9999', fontWeight: '500', fontSize: '0.9em'
+                    });
+                    document.body.prepend(banner);
+                    document.body.style.paddingTop = '3rem';
+                }
+            } catch (e) {}
+        }
+
+        async function loadSettings() {
+            try {
+                const response = await fetch('/api/settings');
+                if (response.ok) {
+                    const data = await response.json();
+                    currentSettings = data.settings;
+                    
+                    // Load auto-record status
+                    const autoRecordResponse = await fetch('/api/auto-record-status');
+                    if (autoRecordResponse.ok) {
+                        const autoRecordData = await autoRecordResponse.json();
+                        document.getElementById('auto-record-checkbox').checked = autoRecordData.enabled;
+                    }
+                    
+                    // Populate form fields
+                    document.getElementById('segmented-recording').checked = currentSettings.segmented_recording;
+                    document.getElementById('segment-duration').value = currentSettings.segment_duration / 60;
+                    document.getElementById('max-file-size').value = currentSettings.max_file_size_gb;
+                    document.getElementById('auto-cleanup').checked = currentSettings.auto_cleanup_enabled;
+                    document.getElementById('cleanup-days').value = currentSettings.cleanup_days;
+                    document.getElementById('min-free-space').value = currentSettings.min_free_space_gb;
+                    
+                    document.getElementById('auto-reconnect').checked = currentSettings.auto_reconnect;
+                    document.getElementById('reconnect-delay').value = currentSettings.reconnect_delay;
+                    document.getElementById('max-reconnect-attempts').value = currentSettings.max_reconnect_attempts;
+                    document.getElementById('exponential-backoff').checked = currentSettings.exponential_backoff;
+                    document.getElementById('max-backoff-delay').value = currentSettings.max_backoff_delay;
+                    
+                    document.getElementById('health-check-enabled').checked = currentSettings.health_check_enabled;
+                    document.getElementById('stall-detection-enabled').checked = currentSettings.stall_detection_enabled;
+                    document.getElementById('stall-threshold').value = currentSettings.stall_threshold_seconds;
+                    
+                    document.getElementById('rtsp-transport').value = currentSettings.rtsp_transport;
+                    document.getElementById('connection-timeout').value = currentSettings.connection_timeout / 1000000;
+                    document.getElementById('enable-ffmpeg-reconnect').checked = currentSettings.enable_ffmpeg_reconnect;
+                    
+                    // Load buffer settings (convert from bytes to MB, microseconds to seconds)
+                    document.getElementById('pull-stream-buffer-size').value = Math.round(data.pullStreamBufferSize / 1048576);
+                    document.getElementById('pull-stream-max-delay').value = Math.round(data.pullStreamMaxDelay / 1000000);
+                }
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                showNotification('Failed to load settings', 'error');
+            }
+        }
+
+        async function loadSRTSettings() {
+            try {
+                const response = await fetch('/api/settings/srt');
+                if (response.ok) {
+                    const data = await response.json();
+                    currentSRTSettings = data.settings;
+                    
+                    // Populate SRT form fields
+                    document.getElementById('srt-latency').value = currentSRTSettings.latency || 120;
+                    document.getElementById('srt-max-bandwidth').value = currentSRTSettings.maxbw || 0;
+                    document.getElementById('srt-transtype').value = currentSRTSettings.transtype || 'live';
+                    document.getElementById('srt-connection-timeout').value = currentSRTSettings.conntimeo || 3000;
+                    document.getElementById('srt-peer-idle-timeout').value = currentSRTSettings.peeridletimeo || 5000;
+                    document.getElementById('srt-encryption').value = String(currentSRTSettings.pbkeylen || '0');
+                    document.getElementById('srt-passphrase').value = currentSRTSettings.passphrase || '';
+                    
+                    // Show/hide passphrase field based on encryption
+                    togglePassphraseField();
+                }
+            } catch (error) {
+                console.error('Error loading SRT settings:', error);
+                showNotification('Failed to load SRT settings', 'error');
+            }
+        }
+
+        async function saveSRTSettings() {
+            try {
+                const pbkeylen = parseInt(document.getElementById('srt-encryption').value);
+                const passphrase = document.getElementById('srt-passphrase').value;
+                
+                // Validate passphrase if encryption is enabled
+                if (pbkeylen > 0 && (!passphrase || passphrase.length < 10 || passphrase.length > 79)) {
+                    showNotification('Encryption passphrase must be 10-79 characters', 'error');
+                    return;
+                }
+                
+                const settings = {
+                    latency: parseInt(document.getElementById('srt-latency').value),
+                    maxbw: parseInt(document.getElementById('srt-max-bandwidth').value),
+                    transtype: document.getElementById('srt-transtype').value,
+                    conntimeo: parseInt(document.getElementById('srt-connection-timeout').value),
+                    peeridletimeo: parseInt(document.getElementById('srt-peer-idle-timeout').value),
+                    pbkeylen: pbkeylen,
+                    passphrase: passphrase
+                };
+
+                const response = await fetch('/api/settings/srt', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showNotification(data.message, 'success');
+                    currentSRTSettings = data.settings;
+                    
+                    // Display example URL
+                    if (data.example_url) {
+                        document.getElementById('srt-url-text').textContent = data.example_url;
+                        document.getElementById('srt-example-url').style.display = 'block';
+                    }
+                } else {
+                    const error = await response.json();
+                    showNotification(error.error || 'Failed to save SRT settings', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving SRT settings:', error);
+                showNotification('Failed to save SRT settings', 'error');
+            }
+        }
+
+        function togglePassphraseField() {
+            const encryption = parseInt(document.getElementById('srt-encryption').value);
+            const passphraseGroup = document.getElementById('srt-passphrase-group');
+            passphraseGroup.style.display = encryption > 0 ? 'block' : 'none';
+        }
+        
+        function copySRTURL() {
+            const urlText = document.getElementById('srt-url-text').textContent;
+            navigator.clipboard.writeText(urlText).then(() => {
+                showNotification('URL pattern copied to clipboard!', 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showNotification('Failed to copy URL', 'error');
+            });
+        }
+
+        async function saveSettings() {
+            try {
+                const settings = {
+                    segmented_recording: document.getElementById('segmented-recording').checked,
+                    segment_duration: parseInt(document.getElementById('segment-duration').value) * 60,
+                    max_file_size_gb: parseInt(document.getElementById('max-file-size').value),
+                    auto_cleanup_enabled: document.getElementById('auto-cleanup').checked,
+                    cleanup_days: parseInt(document.getElementById('cleanup-days').value),
+                    min_free_space_gb: parseInt(document.getElementById('min-free-space').value),
+                    
+                    auto_reconnect: document.getElementById('auto-reconnect').checked,
+                    reconnect_delay: parseInt(document.getElementById('reconnect-delay').value),
+                    max_reconnect_attempts: parseInt(document.getElementById('max-reconnect-attempts').value),
+                    exponential_backoff: document.getElementById('exponential-backoff').checked,
+                    max_backoff_delay: parseInt(document.getElementById('max-backoff-delay').value),
+                    
+                    health_check_enabled: document.getElementById('health-check-enabled').checked,
+                    stall_detection_enabled: document.getElementById('stall-detection-enabled').checked,
+                    stall_threshold_seconds: parseInt(document.getElementById('stall-threshold').value),
+                    
+                    rtsp_transport: document.getElementById('rtsp-transport').value,
+                    connection_timeout: parseInt(document.getElementById('connection-timeout').value) * 1000000,
+                    enable_ffmpeg_reconnect: document.getElementById('enable-ffmpeg-reconnect').checked
+                };
+
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showNotification('Settings saved successfully', 'success');
+                    currentSettings = data.settings;
+                } else {
+                    showNotification('Failed to save settings', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                showNotification('Failed to save settings', 'error');
+            }
+        }
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `notification notification-${type}`;
+            notification.textContent = message;
+            
+            Object.assign(notification.style, {
+                position: 'fixed',
+                top: '20px',
+                right: '20px',
+                padding: '1rem 1.5rem',
+                borderRadius: '8px',
+                color: 'white',
+                fontWeight: '500',
+                zIndex: '10000',
+                animation: 'slideIn 0.3s ease',
+                background: type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'
+            });
+            
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 3000);
+        }
+
+        document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
+        document.getElementById('reset-settings-btn').addEventListener('click', () => {
+            if (confirm('Reset all settings to default values?')) {
+                loadSettings();
+                showNotification('Settings reset to defaults', 'info');
+            }
+        });
+
+        // Handle auto-record checkbox
+        document.getElementById('auto-record-checkbox').addEventListener('change', async (e) => {
+            try {
+                const response = await fetch('/api/auto-record-toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({enabled: e.target.checked})
+                });
+                
+                if (response.ok) {
+                    showNotification(
+                        e.target.checked ? 'Auto-record enabled' : 'Auto-record disabled',
+                        'success'
+                    );
+                } else {
+                    e.target.checked = !e.target.checked;
+                    showNotification('Failed to update auto-record', 'error');
+                }
+            } catch (error) {
+                console.error('Error toggling auto-record:', error);
+                e.target.checked = !e.target.checked;
+                showNotification('Failed to update auto-record', 'error');
+            }
+        });
+
+        // Load settings on page load
+        loadSettings();
+        loadSRTSettings();
+        loadABRSettings();
+        loadStandbySettings();
+        loadTLSSettings();
+        loadAPIKeys();
+        loadAuditLog();
+        checkDefaultPassword();
+        
+        // Logout listener
+        document.getElementById('logout-link').addEventListener('click', (e) => { e.preventDefault(); doLogout(); });
+
+        // Standby save — piggyback on main save or standalone
+        document.getElementById('standby-enabled').addEventListener('change', saveStandbySettings);
+        document.getElementById('standby-timeout').addEventListener('change', saveStandbySettings);
+
+        // TLS listeners
+        document.getElementById('gen-self-signed-btn').addEventListener('click', generateSelfSigned);
+        document.getElementById('le-request-btn').addEventListener('click', requestLetsEncrypt);
+        document.getElementById('le-renew-btn').addEventListener('click', renewLetsEncrypt);
+        document.getElementById('tls-upload-btn').addEventListener('click', uploadTLSCerts);
+        document.getElementById('save-tls-settings-btn').addEventListener('click', saveTLSSettings);
+
+        // API key listeners
+        document.getElementById('gen-api-key-btn').addEventListener('click', generateAPIKey);
+        document.getElementById('copy-api-key-btn').addEventListener('click', copyAPIKey);
+
+        // Audit log listener
+        document.getElementById('refresh-audit-btn').addEventListener('click', loadAuditLog);
+
+        // Certificate management listeners - now active
+        // (old commented-out listeners removed)
+        
+        // SRT encryption dropdown listener
+        document.getElementById('srt-encryption').addEventListener('change', togglePassphraseField);
+        
+        // SRT save button listener
+        document.getElementById('save-srt-settings-btn').addEventListener('click', saveSRTSettings);
+        
+        // SRT URL copy button listener
+        document.getElementById('copy-srt-url-btn').addEventListener('click', copySRTURL);
+
+        // ABR listeners
+        document.getElementById('save-abr-settings-btn').addEventListener('click', saveABRSettings);
+        document.getElementById('abr-medium-enabled').addEventListener('change', toggleMediumFields);
+        
+        setInterval(loadSettings, 60000);
+        setInterval(loadSRTSettings, 60000);
+    </script>
+</body>
+</html>

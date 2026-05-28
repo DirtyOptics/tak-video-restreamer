@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  media:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tak-video-restreamer
+    ports:
+      - "3000:3000"   # Flask Web UI
+      - "8554:8554"   # RTSP
+      - "8555:8555"   # RTSPS (RTSP over TLS)
+      - "1935:1935"       # RTMP
+      - "8890:8890/udp"   # SRT (UDP protocol)
+      - "8888:8888"   # HLS (HTTP Live Streaming)
+      - "127.0.0.1:8889:8889"   # MediaMTX API (localhost only for security)
+      # - "8889:8889"   # MediaMTX API (INSECURE - exposes to all interfaces. Uncomment only if needed for external access)
+    volumes:
+      - ./mediaMTX.yml:/opt/app/mediamtx.yml:ro
+      - ./data/streams:/opt/app/streams
+      - ./data/logs:/opt/app/logs
+      - ./data/hls:/opt/app/hls
+      - ./data:/opt/app/data
+      - ./data/certs:/opt/app/certs
+    environment:
+      - PORT=3000                              # Flask web UI port
+      - MEDIAMTX_API_URL=http://localhost:8889  # MediaMTX API endpoint (internal)
+      - PYTHONUNBUFFERED=1                      # Ensures real-time log output in Docker
+      - STREAMS_DIR=/opt/app/streams            # Directory for recorded video files
+      - DATA_DIR=/opt/app/data                  # Directory for settings, API keys, state
+      - ACTIVE_CERTS_DIR=/opt/app/certs         # Directory for TLS certificates
+      # Authentication — CHANGE THESE before deploying!
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=changeme                 # ⚠️ Change this! Default triggers a warning banner
+      # Session key — set a fixed value so sessions survive container restarts
+      # Generate one with: python -c "import secrets; print(secrets.token_hex(32))"
+      - SECRET_KEY=change-me-to-a-random-secret-key
+      # Optional: auto-generate self-signed TLS certs on startup (default: false)
+      # Set to "true" only if you don't have your own certs (e.g. Let's Encrypt)
+      # - AUTO_GENERATE_CERTS=true
+      # HTTPS for web UI (disabled by default)
+      # - HTTPS_ENABLED=true
+      # - ENABLE_GPU_ENCODING=1                 # Uncomment to enable NVIDIA GPU encoding (requires GPU support below)
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    # Uncomment for NVIDIA GPU support (requires nvidia-docker2 installed):
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,370 @@
+<!--
+This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.
+ Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTSP Restreamer Control Panel</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link active">
+                        Dashboard
+                    </a>
+                    <a href="/recordings" class="nav-link">
+                        Recordings
+                    </a>
+                    <a href="/utils" class="nav-link">
+                        Utils
+                    </a>
+                    <a href="/test" class="nav-link">
+                        Test Video
+                    </a>
+                    <a href="/videowall" class="nav-link">
+                        Video Wall
+                    </a>
+                    <a href="/settings" class="nav-link">
+                        Settings
+                    </a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+                <div class="header-actions">
+                    <div id="uas-mode-badge" class="uas-mode-badge" style="display: none;">
+                        UAS MODE
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <!-- Overview Section -->
+            <section class="overview-grid">
+                <div class="card">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+                        <div>
+                            <h2 style="text-align: center; margin-bottom: 1.5rem;">System Overview</h2>
+                            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;">
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="active-streams">0</span>
+                                    <span class="stat-compact-label">Active Streams</span>
+                                </div>
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="total-viewers">0</span>
+                                    <span class="stat-compact-label">Total Viewers</span>
+                                </div>
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="uptime">--:--:--</span>
+                                    <span class="stat-compact-label">System Uptime</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h2 style="text-align: center; margin-bottom: 1.5rem;">
+                                Disk Space
+                                <span id="disk-device" style="font-size: 0.7em; color: var(--text-muted); font-weight: normal;"></span>
+                            </h2>
+                            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;">
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="disk-total">--</span>
+                                    <span class="stat-compact-label">Total</span>
+                                </div>
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="disk-used">--</span>
+                                    <span class="stat-compact-label">Used</span>
+                                </div>
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="disk-free">--</span>
+                                    <span class="stat-compact-label">Free</span>
+                                </div>
+                                <div class="stat-compact">
+                                    <span class="stat-compact-value" id="disk-percent">--</span>
+                                    <span class="stat-compact-label">Usage</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Enhanced Features Section -->
+            <section class="card" id="enhanced-features" style="display: none;">
+                <h2>Enhanced Features Status</h2>
+                <div class="enhancement-grid">
+
+                    <div class="enhancement-item">
+                        <div class="enhancement-header">
+                            <h3>Core Streaming Protocols</h3>
+                            <span class="status-badge enabled">Active</span>
+                        </div>
+                        <p>Professional multi-protocol streaming via MediaMTX</p>
+                        <div class="enhancement-actions">
+                            <button class="btn btn-small btn-secondary" id="protocol-info-btn">View Protocols</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quick Connect Section -->
+            <section class="card">
+                <h2>Quick Connect</h2>
+                <div class="connection-grid">
+                    <div class="connection-item">
+                        <div class="connection-label">RTSP Server (TCP)</div>
+                        <div class="connection-value" id="rtsp-server">rtsp://localhost:8554/</div>
+                        <button class="btn-copy" onclick="copyToClipboard('rtsp-server')">Copy</button>
+                    </div>
+                    <!-- RTSPS Disabled
+                    <div class="connection-item">
+                        <div class="connection-label">RTSPS Server (Encrypted)</div>
+                        <div class="connection-value" id="rtsps-server">rtsps://localhost:8555/</div>
+                        <button class="btn-copy" onclick="copyToClipboard('rtsps-server')">Copy</button>
+                    </div>
+                    -->
+                    <div class="connection-item">
+                        <div class="connection-label">SRT Server</div>
+                        <div class="connection-value" id="srt-server">srt://localhost:8890?streamid=</div>
+                        <button class="btn-copy" onclick="copyToClipboard('srt-server')">Copy</button>
+                    </div>
+                    <div class="connection-item">
+                        <div class="connection-label">HLS Server (Browser)</div>
+                        <div class="connection-value" id="hls-server">http://localhost:8888/</div>
+                        <button class="btn-copy" onclick="copyToClipboard('hls-server')">Copy</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stream Management Section -->
+            <section class="card">
+                <div class="card-header">
+                    <h2>Active Streams</h2>
+                    <div class="card-actions">
+                        <button id="refresh-streams" class="btn btn-secondary">Refresh</button>
+                        <button id="add-stream" class="btn btn-primary">Add Stream</button>
+                    </div>
+                </div>
+                <div id="streams-container">
+                    <div class="empty-state">
+                        <h3>Loading...</h3>
+                    </div>
+                </div>
+            </section>
+
+
+
+
+
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Stream Modal -->
+    <div id="add-stream-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add New Stream</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="add-stream-form">
+                    <div class="form-group">
+                        <label for="stream-name">Stream Name:</label>
+                        <input type="text" id="stream-name" name="streamName" required>
+                        <small>Use "drone" in name for automatic KLV metadata processing</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="stream-mode">Stream Mode:</label>
+                        <select id="stream-mode" name="streamMode" onchange="togglePullOptions(this.value)">
+                            <option value="push">Push (Client sends to server)</option>
+                            <option value="pull">Pull (Server pulls from remote RTSP)</option>
+                        </select>
+                    </div>
+                    
+                    <div id="pull-options" style="display: none;">
+                        <div class="form-group">
+                            <label for="source-url">Source RTSP URL:</label>
+                            <input type="text" id="source-url" name="sourceUrl" placeholder="rtsp://192.168.1.100:554/stream">
+                            <small>Example: rtsp://192.168.1.100:554/stream or rtsp://camera.example.com/live</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="use-auth" onchange="toggleAuthFields(this.checked)">
+                                Use Authentication
+                            </label>
+                        </div>
+                        
+                        <div id="auth-fields" style="display: none;">
+                            <div class="form-group">
+                                <label for="rtsp-username">Username:</label>
+                                <input type="text" id="rtsp-username" name="rtspUsername" autocomplete="off">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="rtsp-password">Password:</label>
+                                <input type="password" id="rtsp-password" name="rtspPassword" autocomplete="off">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-recording" name="recording">
+                            Start Recording Immediately
+                        </label>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-add-stream">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Create Stream</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function togglePullOptions(mode) {
+            const pullOptions = document.getElementById('pull-options');
+            const sourceUrl = document.getElementById('source-url');
+            if (mode === 'pull') {
+                pullOptions.style.display = 'block';
+                sourceUrl.required = true;
+            } else {
+                pullOptions.style.display = 'none';
+                sourceUrl.required = false;
+            }
+        }
+        
+        function toggleAuthFields(useAuth) {
+            const authFields = document.getElementById('auth-fields');
+            authFields.style.display = useAuth ? 'block' : 'none';
+        }
+        
+        // Load disk space data
+        async function loadDiskSpace() {
+            try {
+                const response = await fetch('/api/settings');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.disk) {
+                        document.getElementById('disk-total').textContent = data.disk.total_gb + ' GB';
+                        document.getElementById('disk-used').textContent = data.disk.used_gb + ' GB';
+                        document.getElementById('disk-free').textContent = data.disk.free_gb + ' GB';
+                        document.getElementById('disk-percent').textContent = data.disk.percent_used + '%';
+                        
+                        // Update device label
+                        const deviceEl = document.getElementById('disk-device');
+                        if (deviceEl && data.disk.device) {
+                            deviceEl.textContent = `(${data.disk.device})`;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading disk space:', error);
+            }
+        }
+        
+        // Load disk space on page load and refresh every 30 seconds
+        loadDiskSpace();
+        setInterval(loadDiskSpace, 30000);
+
+        // Logout
+        document.getElementById('logout-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            fetch('/api/auth/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
+        });
+
+        // Default password warning
+        fetch('/api/auth/status').then(r => r.json()).then(data => {
+            if (data.default_credentials) {
+                const banner = document.createElement('div');
+                banner.innerHTML = '&#9888; <strong>Security Warning:</strong> Default password in use. Change via ADMIN_PASSWORD env var.';
+                Object.assign(banner.style, {
+                    position: 'fixed', top: '0', left: '0', right: '0',
+                    padding: '0.75rem 1rem', background: '#f59e0b', color: '#000',
+                    textAlign: 'center', zIndex: '9999', fontWeight: '500', fontSize: '0.9em'
+                });
+                document.body.prepend(banner);
+                document.body.style.paddingTop = '3rem';
+            }
+        }).catch(() => {});
+    </script>
+
+    <!-- Stream Details Modal -->
+    <div id="stream-details-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="stream-details-title">Stream Details</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="stream-details-content">
+                    <!-- Dynamic content -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Viewers Modal -->
+    <div id="viewers-modal" class="modal">
+        <div class="modal-content" style="max-width:500px">
+            <div class="modal-header">
+                <h3 id="viewers-modal-title">Viewers</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="viewers-modal-content">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-logos">
+                <a href="http://afrl.af.mil/" target="_blank" rel="noopener">
+                    <img src="/static/AFRL Logo_WHITE_website_2in.png" alt="AFRL Logo" class="footer-logo-afrl">
+                </a>
+                <a href="https://www.bbn.com/" target="_blank" rel="noopener">
+                    <img src="/static/BBN_mark_white_2024.png" alt="BBN Logo" class="footer-logo-bbn">
+                </a>
+                <a href="https://sift.net/" target="_blank" rel="noopener">
+                    <img src="/static/SIFT-banner.png" alt="SIFT Logo" class="footer-logo-sift">
+                </a>
+            </div>
+            <div class="footer-license">
+                This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.<br><br>
+                Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.<br><br>
+
+                
+                This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+
+            </div>
+        </div>
+    </footer>
+
+    <script src="/static/socket.io.min.js"></script>
+    <script src="/static/client.js?v=20260223h"></script>
+</body>
+</html>

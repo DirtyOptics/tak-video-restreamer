@@ -1,0 +1,684 @@
+<!--
+This material is based upon work supported by the United States Air Force under contract number FA8750-24-S-B079 (Prime Contractor Smart Information Flow Technologies (SIFT)).  Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the United States Air Force.
+ Copyright (c) 2026 RTX BBN Technologies. Licensed to US Government with unlimited rights.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Utils - Video Transcoding & KLV</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">
+                        Dashboard
+                    </a>
+                    <a href="/recordings" class="nav-link">
+                        Recordings
+                    </a>
+                    <a href="/utils" class="nav-link active">
+                        Utils
+                    </a>
+                    <a href="/test" class="nav-link">
+                        Test Video
+                    </a>
+                    <a href="/videowall" class="nav-link">
+                        Video Wall
+                    </a>
+                    <a href="/settings" class="nav-link">
+                        Settings
+                    </a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <section class="card">
+                <h2>Video Utilities</h2>
+                <p style="color: #888; margin-bottom: 1.5rem;">
+                    Transcode recordings with timecode correction and KLV metadata embedding
+                </p>
+
+                <div class="tab-buttons">
+                    <button class="tab-button active" onclick="switchTab('transcode', this)">
+                        Transcode Video
+                    </button>
+                    <button class="tab-button" onclick="switchTab('klv', this)">
+                        Extract KLV
+                    </button>
+                    <button class="tab-button" onclick="switchTab('jobs', this)">
+                        Jobs
+                    </button>
+                </div>
+
+                <!-- Transcode Tab -->
+                <div id="transcode-tab" class="tab-content active">
+                    <div class="utils-grid">
+                        <div>
+                            <div class="form-group">
+                                <label>Select Recording</label>
+                                <div id="recordings-list" class="recordings-list">
+                                    <div class="empty-state">Loading recordings...</div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Or Enter File Path</label>
+                                <input type="text" id="input-file" placeholder="drone1/recording.mov">
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="form-group">
+                                <label>Transcode Option</label>
+                                <select id="transcode-option">
+                                    <option value="1">Option 1: MOV with corrected timecode (no KLV)</option>
+                                    <option value="2" selected>Option 2: MPEG-TS with embedded KLV (RECOMMENDED)</option>
+                                </select>
+                                <div id="option-info" class="option-info recommended">
+                                    <strong>MPEG-TS with embedded KLV (RECOMMENDED)</strong><br>
+                                    • Embedded KLV in video container<br>
+                                    • STANAG 4609 compliant transport stream<br>
+                                    • Industry standard for UAS metadata<br>
+                                    • Single .ts file with KLV data stream
+                                </div>
+                            </div>
+                            
+                            <button id="start-transcode-btn" class="btn btn-primary" style="width: 100%;">
+                                Start Transcode
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- KLV Extract Tab -->
+                <div id="klv-tab" class="tab-content">
+                    <div class="utils-grid">
+                        <div>
+                            <div class="form-group">
+                                <label>Select Video File</label>
+                                <div id="klv-recordings-list" class="recordings-list">
+                                    <div class="empty-state">Loading recordings...</div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Or Enter File Path</label>
+                                <input type="text" id="klv-input-file" placeholder="drone1/recording.ts">
+                            </div>
+                            <div class="form-group">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input type="checkbox" id="klv-include-raw" style="margin: 0;">
+                                    <span>Include Raw Hex Values</span>
+                                </label>
+                                <small style="margin-top: 0.25rem; display: block; color: var(--text-muted);">
+                                    Export both decoded values and original raw hex data
+                                </small>
+                            </div>
+                        </div>
+
+                        <div>
+                            <button id="extract-klv-btn" class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;">
+                                Extract KLV Metadata
+                            </button>
+                            
+                            <div id="klv-result" style="display: none;">
+                                <div class="option-info">
+                                    <div id="klv-summary"></div>
+                                </div>
+                                <button id="download-klv-json" class="btn btn-secondary" style="width: 100%; margin-top: 1rem;">
+                                    Download JSON
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Jobs Tab -->
+                <div id="jobs-tab" class="tab-content">
+                    <div id="active-jobs-list">
+                        <div class="empty-state">No active or recent jobs</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // Socket.IO with graceful degradation
+        let socket = null;
+        
+        // Try to initialize Socket.IO if available
+        if (typeof io !== 'undefined') {
+            socket = io();
+            
+            // Connect to server
+            socket.on('connect', () => {
+                loadRecordings();
+                loadTranscodeStatus();
+            });
+
+            socket.on('disconnect', () => {
+                console.log('Socket disconnected');
+            });
+
+            // Listen for transcode completion
+            socket.on('message', (msg) => {
+                if (msg.type === 'transcode_complete') {
+                    loadTranscodeStatus();
+                    showNotification(
+                        msg.data.success ? 'Transcode completed!' : 'Transcode failed',
+                        msg.data.success ? 'success' : 'error'
+                    );
+                }
+            });
+        } else {
+            // Socket.IO not available, using polling mode
+            // Load data immediately without Socket.IO
+            loadRecordings();
+            loadTranscodeStatus();
+        }
+
+        let recordings = [];
+        let transcodeJobs = {};
+        let klvData = null;
+
+        // Tab switching
+        function switchTab(tab, element) {
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            if (element) {
+                element.classList.add('active');
+            }
+            document.getElementById(`${tab}-tab`).classList.add('active');
+            
+            if (tab === 'jobs') {
+                loadTranscodeStatus();
+            }
+        }
+
+        // Load recordings
+        async function loadRecordings() {
+            try {
+                const response = await fetch('/api/recordings');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                recordings = await response.json();
+                
+                renderRecordingsList('recordings-list', false);
+                renderRecordingsList('klv-recordings-list', true);
+            } catch (error) {
+                console.error('Error loading recordings:', error);
+                
+                // Show error in UI
+                const containers = ['recordings-list', 'klv-recordings-list'];
+                containers.forEach(containerId => {
+                    const container = document.getElementById(containerId);
+                    if (container) {
+                        container.innerHTML = `<div class="empty-state" style="color: #f44336;">Error loading recordings: ${error.message}</div>`;
+                    }
+                });
+            }
+        }
+
+        function renderRecordingsList(elementId, klvOnly) {
+            const container = document.getElementById(elementId);
+            
+            if (!container) {
+                console.error(`Container ${elementId} not found`);
+                return;
+            }
+            
+            if (recordings.length === 0) {
+                container.innerHTML = '<div class="empty-state">No recordings found</div>';
+                return;
+            }
+            
+            let filteredRecordings = recordings;
+            if (klvOnly) {
+                filteredRecordings = recordings.filter(r => {
+                    const filename = r.filename.toLowerCase();
+                    return filename.endsWith('.ts') || 
+                           filename.endsWith('.mov') ||
+                           filename.endsWith('.mp4') ||
+                           filename.endsWith('.mkv') ||
+                           filename.endsWith('.mxf') ||
+                           filename.endsWith('.mpg') ||
+                           filename.endsWith('.mpeg');
+                });
+            }
+            
+            if (filteredRecordings.length === 0) {
+                container.innerHTML = '<div class="empty-state">No compatible recordings found</div>';
+                return;
+            }
+            
+            container.innerHTML = filteredRecordings.map(rec => {
+                const escapedStream = rec.stream.replace(/'/g, "\\'");
+                const escapedFilename = rec.filename.replace(/'/g, "\\'");
+                return `
+                    <div class="recording-item" data-stream="${escapedStream}" data-filename="${escapedFilename}" data-list="${elementId}">
+                        <div class="recording-name">${rec.filename}</div>
+                        <div class="recording-meta">
+                            Stream: ${rec.stream} | 
+                            Size: ${formatFileSize(rec.size)} |
+                            Created: ${new Date(rec.created).toLocaleString()}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Add click listeners after rendering
+            container.querySelectorAll('.recording-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const stream = item.getAttribute('data-stream');
+                    const filename = item.getAttribute('data-filename');
+                    const listId = item.getAttribute('data-list');
+                    selectRecording(stream, filename, listId);
+                });
+            });
+        }
+
+        function selectRecording(stream, filename, listId) {
+            const path = `${stream}/${filename}`;
+            
+            // Remove previous selection highlights
+            document.querySelectorAll(`#${listId} .recording-item`).forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            // Highlight selected item
+            const selectedItem = document.querySelector(`#${listId} [data-stream="${stream}"][data-filename="${filename}"]`);
+            if (selectedItem) {
+                selectedItem.classList.add('selected');
+            }
+            
+            if (listId === 'recordings-list') {
+                document.getElementById('input-file').value = path;
+            } else {
+                document.getElementById('klv-input-file').value = path;
+            }
+            
+            console.log('Selected recording:', path);
+        }
+
+        // Update option info
+        document.getElementById('transcode-option')?.addEventListener('change', (e) => {
+            const option = parseInt(e.target.value);
+            const infoDiv = document.getElementById('option-info');
+            
+            const infos = {
+                1: {
+                    text: '<strong>MOV with corrected timecode</strong><br>• Corrects timecode to match button press time<br>• No KLV metadata<br>• QuickTime compatible',
+                    recommended: false
+                },
+                2: {
+                    text: '<strong>MPEG-TS with embedded KLV (RECOMMENDED)</strong><br>• TRUE embedded KLV in video container<br>• STANAG 4609 compliant transport stream<br>• Industry standard for UAS metadata<br>• Single .ts file with KLV data stream',
+                    recommended: true
+                }
+            };
+            
+            infoDiv.innerHTML = infos[option].text;
+            infoDiv.className = infos[option].recommended ? 'option-info recommended' : 'option-info';
+        });
+
+        // Start transcode
+        document.getElementById('start-transcode-btn')?.addEventListener('click', async () => {
+            const inputFile = document.getElementById('input-file').value.trim();
+            const option = parseInt(document.getElementById('transcode-option').value);
+            
+            if (!inputFile) {
+                showNotification('Please select or enter an input file', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('start-transcode-btn');
+            btn.disabled = true;
+            btn.textContent = 'Starting...';
+            
+            try {
+                const response = await fetch('/api/transcode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inputFile, option })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('Transcode started successfully!', 'success');
+                    // Switch to jobs tab and activate the button
+                    const jobsBtn = document.querySelector('.tab-button[onclick*="jobs"]');
+                    switchTab('jobs', jobsBtn);
+                    setTimeout(() => loadTranscodeStatus(), 1000);
+                    
+                    // Poll for updates if no socket
+                    if (!socket) {
+                        pollTranscodeStatus(result.transcodeId);
+                    }
+                } else {
+                    const errorMsg = result.error || 'Unknown error';
+                    console.error('Transcode error:', errorMsg);
+                    showNotification('Failed to start transcode. Check console for details.', 'error');
+                }
+            } catch (error) {
+                console.error('Error starting transcode:', error);
+                showNotification('Error starting transcode', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Start Transcode';
+            }
+        });
+
+        // Extract KLV
+        document.getElementById('extract-klv-btn')?.addEventListener('click', async () => {
+            const videoFile = document.getElementById('klv-input-file').value.trim();
+            const includeRaw = document.getElementById('klv-include-raw').checked;
+            
+            if (!videoFile) {
+                showNotification('Please select or enter a video file', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('extract-klv-btn');
+            btn.disabled = true;
+            btn.textContent = 'Extracting...';
+            
+            try {
+                const response = await fetch('/api/klv/extract', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        videoFile,
+                        includeRaw
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    klvData = result.data;
+                    const packets = klvData.packets || [];
+                    const info = klvData.extraction_info || {};
+                    
+                    const cachedNote = result.cached ? ' (cached)' : '';
+                    const rawNote = info.include_raw_values ? ' (with raw hex values)' : '';
+                    
+                    document.getElementById('klv-summary').innerHTML = `
+                        <strong>Extraction Successful${cachedNote}</strong><br>
+                        Format: ${info.format || 'Unknown'}${rawNote}<br>
+                        Total Packets: ${info.total_packets || packets.length}<br>
+                        Extraction Time: ${new Date(info.extraction_time).toLocaleString()}<br>
+                        <br>
+                        <strong>First Packet Preview:</strong><br>
+                        ${packets.length > 0 ? JSON.stringify(packets[0].metadata, null, 2) : 'No packets found'}
+                    `;
+                    
+                    document.getElementById('klv-result').style.display = 'block';
+                    showNotification('KLV extracted successfully!' + cachedNote, 'success');
+                } else {
+                    // Show user-friendly error message without technical details
+                    const errorMsg = result.error || 'Failed to extract KLV metadata';
+                    // Only show basic error, details go to console
+                    if (result.details) {
+                        console.error('KLV extraction details:', result.details);
+                    }
+                    showNotification(errorMsg, 'error');
+                }
+            } catch (error) {
+                console.error('Error extracting KLV:', error);
+                showNotification('Error extracting KLV metadata', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Extract KLV Metadata';
+            }
+        });
+
+        // Download KLV JSON
+        document.getElementById('download-klv-json')?.addEventListener('click', () => {
+            if (!klvData) return;
+            
+            const blob = new Blob([JSON.stringify(klvData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'klv_metadata.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // Load transcode status
+        async function loadTranscodeStatus() {
+            try {
+                const response = await fetch('/api/transcode/status');
+                const status = await response.json();
+                
+                const container = document.getElementById('active-jobs-list');
+                const allJobs = [...status.active, ...status.completed, ...status.failed];
+                
+                if (allJobs.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No active or recent jobs</div>';
+                    return;
+                }
+                
+                container.innerHTML = allJobs.map(job => renderJobCard(job)).join('');
+                
+                // Auto-refresh if there are active jobs
+                if (status.active.length > 0) {
+                    setTimeout(loadTranscodeStatus, 3000);
+                }
+            } catch (error) {
+                console.error('Error loading transcode status:', error);
+            }
+        }
+
+        function renderJobCard(job) {
+            const elapsed = Math.floor(job.elapsed || 0);
+            const progress = job.progress || 0;
+            const isActive = job.status === 'running' || job.status === 'starting';
+            
+            return `
+                <div class="job-card">
+                    <div class="job-header">
+                        <div class="job-title">${job.inputFile}</div>
+                        <div class="job-status ${job.status}">${job.status.toUpperCase()}</div>
+                    </div>
+                    
+                    ${isActive ? `
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progress}%"></div>
+                        </div>
+                    ` : ''}
+                    
+                    ${job.status === 'completed' ? `
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: 100%; background: #4CAF50;"></div>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="job-details">
+                        <div class="job-detail">
+                            <span class="job-detail-label">Option:</span>
+                            <span class="job-detail-value">Option ${job.option}</span>
+                        </div>
+                        <div class="job-detail">
+                            <span class="job-detail-label">${job.status === 'completed' || job.status === 'failed' ? 'Duration:' : 'Elapsed:'}</span>
+                            <span class="job-detail-value">${formatDuration(elapsed)}</span>
+                        </div>
+                        ${job.status === 'running' && progress > 0 ? `
+                            <div class="job-detail">
+                                <span class="job-detail-label">Progress:</span>
+                                <span class="job-detail-value">${progress}%</span>
+                            </div>
+                        ` : ''}
+                        ${job.outputSize ? `
+                            <div class="job-detail">
+                                <span class="job-detail-label">Output Size:</span>
+                                <span class="job-detail-value">${formatFileSize(job.outputSize)}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    ${job.outputFile ? `
+                        <div class="output-file">
+                            ✓ Output: ${job.outputFile}
+                        </div>
+                    ` : ''}
+                    
+                    ${job.error ? `
+                        <div class="error-message">
+                            ✗ Error: ${job.error}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // Helper functions
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        function formatDuration(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+        
+        function pollTranscodeStatus(transcodeId) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/transcode/${transcodeId}/status`);
+                    const job = await response.json();
+                    
+                    if (job.status === 'completed' || job.status === 'failed') {
+                        clearInterval(interval);
+                        loadTranscodeStatus();
+                        showNotification(
+                            job.status === 'completed' ? 'Transcode completed!' : 'Transcode failed',
+                            job.status === 'completed' ? 'success' : 'error'
+                        );
+                    } else {
+                        // Refresh the jobs tab if it's active
+                        if (document.getElementById('jobs-tab').classList.contains('active')) {
+                            loadTranscodeStatus();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error polling transcode status:', error);
+                }
+            }, 3000); // Poll every 3 seconds
+        }
+
+        function showNotification(message, type = 'info') {
+            try {
+                // Create toast notification (similar to client.js)
+                const notification = document.createElement('div');
+                const safeType = (type && typeof type === 'string') ? type : 'info';
+                const safeMessage = (message && typeof message === 'string') ? message : 'Unknown error';
+                
+                notification.className = `notification notification-${safeType}`;
+                notification.textContent = safeMessage;
+            
+                notification.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    padding: 15px 20px;
+                    border-radius: 8px;
+                    color: white;
+                    font-weight: 600;
+                    z-index: 10000;
+                    max-width: 400px;
+                    opacity: 0;
+                    transform: translateX(100%);
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                `;
+                
+                switch (type) {
+                    case 'success':
+                        notification.style.backgroundColor = '#10b981';
+                        break;
+                    case 'error':
+                        notification.style.backgroundColor = '#ef4444';
+                        break;
+                    case 'warning':
+                        notification.style.backgroundColor = '#f59e0b';
+                        break;
+                    default:
+                        notification.style.backgroundColor = '#3b82f6';
+                }
+                
+                document.body.appendChild(notification);
+                
+                // Animate in
+                setTimeout(() => {
+                    notification.style.opacity = '1';
+                    notification.style.transform = 'translateX(0)';
+                }, 100);
+                
+                // Remove after 5 seconds
+                setTimeout(() => {
+                    notification.style.opacity = '0';
+                    notification.style.transform = 'translateX(100%)';
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.parentNode.removeChild(notification);
+                        }
+                    }, 300);
+                }, 5000);
+            } catch (notificationError) {
+                console.error('Error showing notification:', notificationError);
+            }
+        }
+
+        // Initial load
+        loadRecordings();
+
+        // Logout
+        document.getElementById('logout-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            fetch('/api/auth/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
+        });
+
+        // Default password warning
+        fetch('/api/auth/status').then(r => r.json()).then(data => {
+            if (data.default_credentials) {
+                const banner = document.createElement('div');
+                banner.innerHTML = '&#9888; <strong>Security Warning:</strong> Default password in use. Change via ADMIN_PASSWORD env var.';
+                Object.assign(banner.style, {
+                    position: 'fixed', top: '0', left: '0', right: '0',
+                    padding: '0.75rem 1rem', background: '#f59e0b', color: '#000',
+                    textAlign: 'center', zIndex: '9999', fontWeight: '500', fontSize: '0.9em'
+                });
+                document.body.prepend(banner);
+                document.body.style.paddingTop = '3rem';
+            }
+        }).catch(() => {});
+    </script>
+</body>
+</html>
