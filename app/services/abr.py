@@ -533,12 +533,16 @@ class ABRManager:
         ]
 
         # Build filter complex for scaling
+        # format=yuv420p is explicit here so that high-bit-depth inputs (e.g. 10-bit AV1,
+        # 10-bit HEVC) are correctly converted before reaching the libx264 encoder,
+        # which requires 8-bit yuv420p.
         filter_parts = []
         for idx, r in enumerate(renditions):
             w, h = r['width'], r['height']
             filter_parts.append(
                 f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[v{idx}]"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+                f"format=yuv420p[v{idx}]"
             )
         cmd += ['-filter_complex', ';'.join(filter_parts)]
 
