@@ -173,19 +173,43 @@ This is distributed in the hope that it will be useful, but without any warranty
         async function loadCell(idx, streamName) {
             destroyCell(idx);
             if (!streamName) return;
-            // Use ABR path if transcoding is already running (e.g. MPEG-TS source
-            // that MediaMTX cannot natively HLS-mux), otherwise proxy MediaMTX HLS.
-            let src;
+
+            // Some sources (notably MPEG-TS from ATAK/drone publishers) carry no
+            // codec MediaMTX can HLS-mux, so its native HLS 404s. The server flags
+            // these via needsTranscode; route them straight to the ABR/FFmpeg
+            // transcode instead of wasting a round-trip on the proxy.
+            const meta = lastStreams.find(s => s.name === streamName);
+            const needsTranscode = !!(meta && meta.needsTranscode);
+
             let abrRunning = false;
             try {
                 const resp = await fetch(`/api/streams/${encodeURIComponent(streamName)}/abr/status`);
                 const data = resp.ok ? await resp.json() : {};
                 abrRunning = !!data.running;
             } catch { /* fall through */ }
-            src = abrRunning
+
+            if (needsTranscode && !abrRunning) {
+                // Kick off transcoding up front, then load the master playlist once
+                // FFmpeg has had time to produce its first segment.
+                const { overlay, video, status } = cells[idx];
+                overlay.textContent = 'Transcoding…';
+                overlay.className = 'vw-overlay active';
+                video.style.display = 'none';
+                status.style.display = 'none';
+                try {
+                    await fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' });
+                } catch { /* error handler in _loadCellWithSrc will retry */ }
+                setTimeout(() => {
+                    _loadCellWithSrc(idx, streamName, `/hls/${encodeURIComponent(streamName)}/master.m3u8`, true);
+                }, 6000);
+                return;
+            }
+
+            const useTranscode = abrRunning || needsTranscode;
+            const src = useTranscode
                 ? `/hls/${encodeURIComponent(streamName)}/master.m3u8`
                 : `/api/hls/proxy/${encodeURIComponent(streamName)}/index.m3u8?videoonly=1`;
-            _loadCellWithSrc(idx, streamName, src, abrRunning);
+            _loadCellWithSrc(idx, streamName, src, useTranscode);
         }
 
         function _loadCellWithSrc(idx, streamName, src, isTranscodeFallback) {
