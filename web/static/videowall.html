@@ -287,29 +287,59 @@ This is distributed in the hope that it will be useful, but without any warranty
 
             hls.on(Hls.Events.ERROR, function(event, data) {
                 if (!data.fatal) return;
+                const httpStatus = data.response && data.response.code;
                 switch (data.type) {
                     case Hls.ErrorTypes.NETWORK_ERROR:
                         if (!isTranscodeFallback) {
-                            // Proxy 404 likely means MediaMTX can't mux this codec — start ABR
                             hls.destroy();
                             state.hls = null;
-                            overlay.textContent = 'Transcoding…';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
+                            fetch(`/api/streams/${encodeURIComponent(streamName)}/abr/status`)
+                                .then(r => r.ok ? r.json() : {})
+                                .then(s => {
+                                    if (s && s.running) {
+                                        overlay.textContent = 'Waiting for source\u2026';
+                                        overlay.className = 'vw-overlay active';
+                                        setTimeout(() => {
+                                            if (cells[idx].state.assignedStream !== streamName) return;
+                                            loadCell(idx, streamName);
+                                        }, 10000);
+                                    } else {
+                                        overlay.textContent = 'Transcoding…';
+                                        overlay.className = 'vw-overlay active';
+                                        return fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' })
+                                            .then(() => setTimeout(() => {
+                                                if (cells[idx].state.assignedStream !== streamName) return;
+                                                const abrSrc = `/hls/${encodeURIComponent(streamName)}/master.m3u8`;
+                                                _loadCellWithSrc(idx, streamName, abrSrc, true);
+                                            }, 6000));
+                                    }
+                                })
+                                .catch(() => setTimeout(() => loadCell(idx, streamName), 5000));
+                        } else if (httpStatus === 503) {
+                            hls.destroy();
+                            state.hls = null;
+                            overlay.textContent = 'Waiting for source\u2026';
                             overlay.className = 'vw-overlay active';
                             video.style.display = 'none';
                             status.style.display = 'none';
-                            fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' })
-                                .then(() => {
-                                    setTimeout(() => {
-                                        const abrSrc = `/hls/${encodeURIComponent(streamName)}/master.m3u8`;
-                                        _loadCellWithSrc(idx, streamName, abrSrc, true);
-                                    }, 6000);
-                                })
-                                .catch(() => setTimeout(() => loadCell(idx, streamName), 5000));
+                            setTimeout(() => {
+                                if (cells[idx].state.assignedStream !== streamName) return;
+                                _loadCellWithSrc(idx, streamName, src, true);
+                            }, 5000);
                         } else {
-                            // Already on ABR — source may be starting up, retry with delay
-                            status.textContent = 'Waiting for source\u2026';
-                            status.style.display = 'block';
-                            setTimeout(() => { if (state.hls) state.hls.startLoad(); }, 3000);
+
+                            hls.destroy();
+                            state.hls = null;
+                            overlay.textContent = 'Waiting for source\u2026';
+                            overlay.className = 'vw-overlay active';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
+                            setTimeout(() => {
+                                if (cells[idx].state.assignedStream !== streamName) return;
+                                loadCell(idx, streamName);
+                            }, 10000);
                         }
                         break;
                     case Hls.ErrorTypes.MEDIA_ERROR:

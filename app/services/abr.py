@@ -222,10 +222,7 @@ class ABRManager:
                     return {'status': 'already_running', 'stream': stream_name}
 
             stream_dir = os.path.join(HLS_OUTPUT_DIR, stream_name)
-            # Remove any stale playlists/segments from a previous run.
-            # Without this, _playlist_response will return 503 "Playlist stale"
-            # until FFmpeg rewrites index.m3u8, which can take tens of seconds
-            # for high-bitrate sources (e.g. 4K H.265).
+
             self._cleanup_segments(stream_dir)
             os.makedirs(stream_dir, exist_ok=True)
 
@@ -285,14 +282,22 @@ class ABRManager:
             return {'running': False, 'stream': stream_name}
 
         proc = state.get('process')
-        running = proc is not None and proc.poll() is None
+        process_alive = proc is not None and proc.poll() is None
+
+        if process_alive:
+            stream_dir = state.get('stream_dir', os.path.join(HLS_OUTPUT_DIR, stream_name))
+            master = os.path.join(stream_dir, 'master.m3u8')
+            elapsed = time.time() - state.get('started_at', 0)
+            if elapsed > STARTUP_GRACE and not os.path.isfile(master):
+                process_alive = False
 
         return {
             'running': state.get('active', False),
+            'process_alive': process_alive,
             'stream': stream_name,
             'pid': proc.pid if proc else None,
             'restart_count': state.get('restart_count', 0),
-            'uptime_seconds': int(time.time() - state['started_at']) if running else 0,
+            'uptime_seconds': int(time.time() - state['started_at']) if process_alive else 0,
         }
 
     def list_active(self) -> list:
@@ -521,14 +526,11 @@ class ABRManager:
             'ffmpeg',
             '-loglevel', 'warning',   # Suppress frame= progress lines (prevents log bloat)
             '-rtsp_transport', self._get_rtsp_transport(),
-            # Tolerate H.265 reference-frame errors and regenerate PTS so the
-            # filter chain never sees huge timestamp gaps (which cause ~1000 frame
-            # duplications and stall the first HLS segment from being written).
             '-err_detect', 'ignore_err',
             '-fflags', '+genpts+discardcorrupt+nobuffer',
             '-flags', 'low_delay',
-            '-analyzeduration', '2000000',
-            '-probesize', '2000000',
+            '-analyzeduration', '5000000',
+            '-probesize', '10000000',
             '-i', source_url,
         ]
 
@@ -554,12 +556,12 @@ class ABRManager:
                 '-preset', 'ultrafast',
                 '-tune', 'zerolatency',
                 f'-profile:v:{idx}', r['profile'],
-                f'-level:v:{idx}', r['level'],
                 '-pix_fmt', 'yuv420p',
+                '-r', '30',
                 f'-b:v:{idx}', r['video_bitrate'],
                 f'-maxrate:v:{idx}', r['max_rate'],
                 f'-bufsize:v:{idx}', r['buf_size'],
-                '-g', str(HLS_SEGMENT_DURATION * 30),  # GOP = segment duration * fps
+                '-g', str(HLS_SEGMENT_DURATION * 30),
                 '-keyint_min', str(HLS_SEGMENT_DURATION * 30),
                 '-sc_threshold', '0',
             ]
