@@ -49,7 +49,7 @@ ABR_STATE_FILE = os.path.join(DATA_DIR, 'abr_state.json')
 
 # HLS tuning
 HLS_LOW_LATENCY_MODE = os.environ.get('HLS_LOW_LATENCY_MODE', '').lower() == 'true'
-HLS_SEGMENT_DURATION = int(os.environ.get('HLS_SEGMENT_DURATION', 2 if HLS_LOW_LATENCY_MODE else 4))
+HLS_SEGMENT_DURATION = int(os.environ.get('HLS_SEGMENT_DURATION', 2))
 HLS_LIST_SIZE = int(os.environ.get('HLS_LIST_SIZE', 10))
 
 # Stall detection
