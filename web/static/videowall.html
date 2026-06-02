@@ -144,7 +144,7 @@ This is distributed in the hope that it will be useful, but without any warranty
                 const overlay = cell.querySelector('.vw-overlay');
                 const status = cell.querySelector('.vw-status');
 
-                const state = { hls: null, mediaRecovery: 0 };
+                const state = { hls: null, mediaRecovery: 0, stallTimer: null, stallHandlers: null, assignedStream: null, waitingForStream: false };
                 cells.push({ select, video, overlay, status, state });
 
                 select.addEventListener('change', () => { loadCell(i, select.value); saveState(); });
@@ -156,23 +156,36 @@ This is distributed in the hope that it will be useful, but without any warranty
             }
         }
 
-        function destroyCell(idx) {
+        function destroyCell(idx, keepOverlay) {
             const { state, video, overlay, status } = cells[idx];
+            if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+            if (state.stallHandlers) {
+                video.removeEventListener('waiting', state.stallHandlers.waiting);
+                video.removeEventListener('playing', state.stallHandlers.playing);
+                state.stallHandlers = null;
+            }
             if (state.hls) {
                 state.hls.destroy();
                 state.hls = null;
             }
             video.src = '';
             video.style.display = 'none';
-            overlay.textContent = 'No stream selected';
-            overlay.className = 'vw-overlay';
+            if (!keepOverlay) {
+                overlay.textContent = 'No stream selected';
+                overlay.className = 'vw-overlay';
+            }
             status.style.display = 'none';
             state.mediaRecovery = 0;
         }
 
         async function loadCell(idx, streamName) {
-            destroyCell(idx);
+            const wasPlaying = !!(cells[idx].state.hls || cells[idx].video.src);
+            destroyCell(idx, wasPlaying && !!streamName);
+            cells[idx].state.assignedStream = streamName || null;
+            cells[idx].state.waitingForStream = false;
             if (!streamName) return;
+            cells[idx].overlay.textContent = 'Reconnecting…';
+            cells[idx].overlay.className = 'vw-overlay active';
 
             const meta = lastStreams.find(s => s.name === streamName);
             const needsTranscode = !!(meta && meta.needsTranscode);
@@ -245,6 +258,30 @@ This is distributed in the hope that it will be useful, but without any warranty
                 overlay.textContent = '';
                 overlay.className = 'vw-overlay';
                 status.style.display = 'none';
+                // Stall detection: video.waiting fires the moment the player runs out of
+                // buffered data. If playback doesn't resume within 8s, the source is gone.
+                if (state.stallHandlers) {
+                    video.removeEventListener('waiting', state.stallHandlers.waiting);
+                    video.removeEventListener('playing', state.stallHandlers.playing);
+                }
+                const onWaiting = () => {
+                    if (state.stallTimer) return;
+                    state.stallTimer = setTimeout(() => {
+                        state.stallTimer = null;
+                        overlay.textContent = 'Waiting for video…';
+                        overlay.className = 'vw-overlay active';
+                        video.style.display = 'none';
+                        status.style.display = 'none';
+                        if (state.hls) { state.hls.destroy(); state.hls = null; }
+                        setTimeout(() => loadCell(idx, streamName), 3000);
+                    }, 8000);
+                };
+                const onPlaying = () => {
+                    if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+                };
+                state.stallHandlers = { waiting: onWaiting, playing: onPlaying };
+                video.addEventListener('waiting', onWaiting);
+                video.addEventListener('playing', onPlaying);
                 video.play().catch(() => {});
             });
 
@@ -269,10 +306,10 @@ This is distributed in the hope that it will be useful, but without any warranty
                                 })
                                 .catch(() => setTimeout(() => loadCell(idx, streamName), 5000));
                         } else {
-                            // Already on ABR — just retry
-                            status.textContent = 'Reconnecting…';
+                            // Already on ABR — source may be starting up, retry with delay
+                            status.textContent = 'Waiting for source\u2026';
                             status.style.display = 'block';
-                            hls.startLoad();
+                            setTimeout(() => { if (state.hls) state.hls.startLoad(); }, 3000);
                         }
                         break;
                     case Hls.ErrorTypes.MEDIA_ERROR:
@@ -302,18 +339,22 @@ This is distributed in the hope that it will be useful, but without any warranty
                             hls.destroy();
                             state.hls = null;
                             state.mediaRecovery = 0;
+                            overlay.textContent = 'Reconnecting…';
+                            overlay.className = 'vw-overlay active';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
                             setTimeout(() => loadCell(idx, streamName), 5000);
-                            status.textContent = 'Reloading…';
-                            status.style.display = 'block';
                         }
                         break;
                     default:
                         hls.destroy();
                         state.hls = null;
                         state.mediaRecovery = 0;
+                        overlay.textContent = 'Reconnecting…';
+                        overlay.className = 'vw-overlay active';
+                        video.style.display = 'none';
+                        status.style.display = 'none';
                         setTimeout(() => loadCell(idx, streamName), 3000);
-                        status.textContent = 'Reloading…';
-                        status.style.display = 'block';
                         break;
                 }
             });
@@ -326,16 +367,42 @@ This is distributed in the hope that it will be useful, but without any warranty
                 opt.textContent = s.name + (s.ready ? '' : ' (offline)');
                 return opt;
             });
-            cells.forEach(({ select }, idx) => {
-                const current = select.value;
-                // Remove all options except first (empty)
+            cells.forEach(({ select, state, video, overlay, status }, idx) => {
+                const assigned = state.assignedStream;
+                // Rebuild options
                 while (select.options.length > 1) select.remove(1);
                 options.forEach(opt => select.appendChild(opt.cloneNode(true)));
-                // Restore selection if still valid
-                if (current && streams.find(s => s.name === current)) {
-                    select.value = current;
-                } else {
-                    select.value = '';
+                // Make sure the assigned stream is in the dropdown even if currently offline
+                if (assigned && !streams.find(s => s.name === assigned)) {
+                    const opt = document.createElement('option');
+                    opt.value = assigned;
+                    opt.textContent = assigned + ' (offline)';
+                    select.appendChild(opt);
+                }
+                select.value = assigned || '';
+
+                if (!assigned) return;
+                const streamInfo = streams.find(s => s.name === assigned);
+                const streamReady = !!(streamInfo && streamInfo.ready);
+                if (!streamReady && !state.waitingForStream) {
+                    // Source went away — tear down playback, show waiting state
+                    state.waitingForStream = true;
+                    if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+                    if (state.stallHandlers) {
+                        video.removeEventListener('waiting', state.stallHandlers.waiting);
+                        video.removeEventListener('playing', state.stallHandlers.playing);
+                        state.stallHandlers = null;
+                    }
+                    if (state.hls) { state.hls.destroy(); state.hls = null; }
+                    video.src = '';
+                    video.style.display = 'none';
+                    status.style.display = 'none';
+                    overlay.textContent = 'Waiting for video…';
+                    overlay.className = 'vw-overlay active';
+                } else if (streamReady && state.waitingForStream) {
+                    // Source returned — auto-reload
+                    state.waitingForStream = false;
+                    loadCell(idx, assigned);
                 }
             });
         }

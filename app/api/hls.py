@@ -140,6 +140,17 @@ def serve_master_playlist(stream_name):
     if not _valid_stream(stream_name):
         abort(400)
     filepath = os.path.join(HLS_OUTPUT_DIR, stream_name, 'master.m3u8')
+    # If ABR is active but master.m3u8 hasn't been written yet (FFmpeg still starting)
+    # or waiting for the source to publish), return 503 so clients treat this as a
+    # transient "starting up" state rather than a permanent 404.
+    if not os.path.isfile(filepath):
+        status = abr_manager.status(stream_name)
+        if status.get('running', False):
+            resp = Response('Stream starting', status=503,
+                            mimetype='text/plain')
+            resp.headers['Retry-After'] = '2'
+            resp.headers['Cache-Control'] = 'no-cache, no-store'
+            return _cors(resp)
     return _cors(_playlist_response(filepath))
 
 
@@ -296,9 +307,11 @@ def _serve_player_page(stream_name):
                     switch (data.type) {{
                         case Hls.ErrorTypes.NETWORK_ERROR:
                             console.log('Fatal network error, retrying...');
-                            statusDiv.textContent = 'Reconnecting...';
+                            statusDiv.textContent = 'Waiting for stream source\u2026';
                             statusDiv.style.display = 'block';
-                            hls.startLoad();
+                            setTimeout(function() {{
+                                if (hls) hls.startLoad();
+                            }}, 3000);
                             break;
                         case Hls.ErrorTypes.MEDIA_ERROR:
                             if (mediaRecoveryAttempts < maxMediaRecovery) {{
