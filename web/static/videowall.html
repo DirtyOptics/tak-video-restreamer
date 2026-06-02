@@ -174,10 +174,6 @@ This is distributed in the hope that it will be useful, but without any warranty
             destroyCell(idx);
             if (!streamName) return;
 
-            // Some sources (notably MPEG-TS from ATAK/drone publishers) carry no
-            // codec MediaMTX can HLS-mux, so its native HLS 404s. The server flags
-            // these via needsTranscode; route them straight to the ABR/FFmpeg
-            // transcode instead of wasting a round-trip on the proxy.
             const meta = lastStreams.find(s => s.name === streamName);
             const needsTranscode = !!(meta && meta.needsTranscode);
 
@@ -189,8 +185,6 @@ This is distributed in the hope that it will be useful, but without any warranty
             } catch { /* fall through */ }
 
             if (needsTranscode && !abrRunning) {
-                // Kick off transcoding up front, then load the master playlist once
-                // FFmpeg has had time to produce its first segment.
                 const { overlay, video, status } = cells[idx];
                 overlay.textContent = 'Transcoding…';
                 overlay.className = 'vw-overlay active';
@@ -198,7 +192,7 @@ This is distributed in the hope that it will be useful, but without any warranty
                 status.style.display = 'none';
                 try {
                     await fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' });
-                } catch { /* error handler in _loadCellWithSrc will retry */ }
+                } catch {}
                 setTimeout(() => {
                     _loadCellWithSrc(idx, streamName, `/hls/${encodeURIComponent(streamName)}/master.m3u8`, true);
                 }, 6000);

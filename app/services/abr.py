@@ -484,8 +484,6 @@ class ABRManager:
         # subprocess.PIPE has a ~64KB OS buffer; if FFmpeg fills it and nobody
         # reads, FFmpeg blocks on write() and the stream freezes.
         log_path = os.path.join(FFMPEG_LOG_DIR, f'{stream_name}.log')
-        # dirname (not FFMPEG_LOG_DIR) so nested stream names like "live/kyles23"
-        # get their parent directory created too.
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         try:
             stderr_file = open(log_path, 'w')

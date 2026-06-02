@@ -88,9 +88,6 @@ def _playlist_response(filepath, check_abr_stream=None):
 
 
 def _valid_stream(name):
-    # Allow nested paths (e.g. "live/kyles23") since MediaMTX paths may contain
-    # slashes, but reject traversal ("..") and leading/trailing slashes so the
-    # name stays safely within the HLS output directory.
     return (
         bool(name)
         and len(name) <= 128

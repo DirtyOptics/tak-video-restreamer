@@ -305,19 +305,10 @@ def _resolve_source_info(source: dict | None, conn_map: dict | None = None) -> d
     return {'protocol': protocol, 'sourceAddress': address}
 
 
-# Codecs MediaMTX can package directly into HLS (mirrors MediaMTX's own
-# supported-codec list). A source whose tracks are none of these — most
-# commonly an opaque "MPEG-TS" track from an ATAK/drone publisher — cannot be
-# HLS-muxed natively and must be transcoded (via ABR/FFmpeg) for browser playback.
 HLS_MUXABLE_CODECS = {'AV1', 'VP9', 'H265', 'H264', 'Opus', 'MPEG-4 Audio'}
 
 
 def _needs_transcode(tracks: list) -> bool:
-    """True if MediaMTX cannot natively HLS-mux this source's tracks.
-
-    Returns False when tracks are unknown (empty) so callers fall back to the
-    normal proxy path and its reactive transcode fallback.
-    """
     if not tracks:
         return False
     return not any(track in HLS_MUXABLE_CODECS for track in tracks)
