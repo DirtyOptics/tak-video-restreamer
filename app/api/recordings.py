@@ -33,6 +33,12 @@ recordings_bp = Blueprint('recordings', __name__)
 # Stream name validation regex - only safe characters
 STREAM_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 
+# Codec detection cache: avoid a full ffprobe round-trip on every recording
+# start for the same active stream (common when re-recording after a stop).
+# Format: {stream_name: {'info': stream_info, 'url': str, 'options': list, 'expires': float}}
+_codec_cache: dict = {}
+_CODEC_CACHE_TTL = 30  # seconds
+
 
 def validate_stream_name(stream_name: str) -> bool:
     """Validate stream name contains only safe characters"""
@@ -94,25 +100,40 @@ def start_recording(stream_name):
             # Reserve the recording slot to prevent race condition
             active_recordings[stream_name] = {'status': 'starting'}
         
-        # Try RTSP first, then SRT
-        rtsp_url = f'rtsp://localhost:8554/{stream_name}'
-        srt_url = f'srt://localhost:8890?streamid=read:{stream_name}'
-        
         # Notify clients that codec detection has started
         broadcast('codec_detecting', {'name': stream_name, 'status': 'probing'})
         
-        # Detect codec - try RTSP first
-        stream_info = detect_stream_codec(rtsp_url, timeout=10)
-        stream_url = rtsp_url
-        input_options = ['-rtsp_transport', server_settings.get('rtsp_transport', 'tcp')]
-        
-        # If RTSP fails, try SRT
-        if not stream_info:
-            logger.info(f"RTSP detection failed, trying SRT for {stream_name}")
-            stream_info = detect_stream_codec(srt_url, timeout=10)
+        # Detect codec — check cache first to avoid a full ffprobe round-trip
+        # on every start for the same active stream.
+        cached = _codec_cache.get(stream_name)
+        if cached and time.time() < cached['expires']:
+            stream_info = cached['info']
+            stream_url = cached['url']
+            input_options = cached['options']
+            logger.info(f"Recording {stream_name}: using cached codec info ({stream_info.get('codec')})")
+        else:
+            # Try RTSP first, then SRT
+            rtsp_url = f'rtsp://localhost:8554/{stream_name}'
+            srt_url = f'srt://localhost:8890?streamid=read:{stream_name}'
+            stream_info = detect_stream_codec(rtsp_url, timeout=10)
+            stream_url = rtsp_url
+            input_options = ['-rtsp_transport', server_settings.get('rtsp_transport', 'tcp')]
+            
+            # If RTSP fails, try SRT
+            if not stream_info:
+                logger.info(f"RTSP detection failed, trying SRT for {stream_name}")
+                stream_info = detect_stream_codec(srt_url, timeout=10)
+                if stream_info:
+                    stream_url = srt_url
+                    input_options = []  # No special options for SRT
+            
             if stream_info:
-                stream_url = srt_url
-                input_options = []  # No special options for SRT
+                _codec_cache[stream_name] = {
+                    'info': stream_info,
+                    'url': stream_url,
+                    'options': input_options,
+                    'expires': time.time() + _CODEC_CACHE_TTL,
+                }
         
         if not stream_info:
             # Clean up reserved slot on failure
@@ -413,6 +434,8 @@ def stop_recording(stream_name):
         
         # Clean up active recordings FIRST to prevent duplicate stops
         del active_recordings[stream_name]
+        # Invalidate codec cache so the next recording start re-probes the stream
+        _codec_cache.pop(stream_name, None)
         
         # Analyze recording if file exists
         analysis = None

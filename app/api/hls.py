@@ -20,7 +20,7 @@ import logging
 import requests as http_requests
 from flask import Blueprint, jsonify, request, send_from_directory, abort, Response
 
-from app.services.abr import abr_manager, HLS_OUTPUT_DIR
+from app.services.abr import abr_manager, HLS_OUTPUT_DIR, HLS_SEGMENT_DURATION, HLS_LIST_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,7 @@ def _playlist_response(filepath, check_abr_stream=None):
     # Threshold: segment_duration * (list_size + 2) seconds — generous enough
     # that a single slow segment doesn't trigger this.
     try:
-        SEGMENT_DURATION = int(os.environ.get('HLS_SEGMENT_DURATION', 4))
-        LIST_SIZE = int(os.environ.get('HLS_LIST_SIZE', 10))
-        stale_threshold = SEGMENT_DURATION * (LIST_SIZE + 2)
+        stale_threshold = HLS_SEGMENT_DURATION * (HLS_LIST_SIZE + 2)
         if check_abr_stream and (time.time() - os.path.getmtime(filepath)) > stale_threshold:
             resp = Response('Playlist stale', status=503,
                             mimetype='application/vnd.apple.mpegurl')

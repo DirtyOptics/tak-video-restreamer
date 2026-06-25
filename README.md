@@ -3053,7 +3053,7 @@ Check the FFmpeg log at `data/logs/ffmpeg/{stream}.log`. Common causes:
 | `MEDIAMTX_RTSP_URL` | `rtsp://127.0.0.1:8554` | RTSP source URL for FFmpeg ABR transcoding |
 | `MEDIAMTX_HLS_URL` | `http://127.0.0.1:8888` | Upstream MediaMTX HLS for CORS proxy |
 | `HLS_OUTPUT_DIR` | `/opt/app/hls` | Directory for HLS segments/playlists |
-| `HLS_SEGMENT_DURATION` | `4` (`2` if low-latency) | Segment duration in seconds |
+| `HLS_SEGMENT_DURATION` | `2` | Segment duration in seconds |
 | `HLS_LIST_SIZE` | `10` | Number of segments in playlist |
 | `HLS_LOW_LATENCY_MODE` | `false` | Enable low-latency HLS (shorter segments, faster start) |
 | `FFMPEG_LOG_DIR` | `$LOGS_DIR/ffmpeg` | FFmpeg stderr log directory |

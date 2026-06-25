@@ -164,7 +164,7 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
     process = subprocess.Popen(
         ffmpeg_args,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,  # Never read; PIPE would deadlock once the 64KB OS buffer fills
         stderr=subprocess.PIPE
     )
 
@@ -488,6 +488,10 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
         with hidden_streams_lock:
             hidden_streams.discard(stream_name)
 
+    # Remove bytes tracker entry so it doesn't grow without bound across many
+    # transient streams over the lifetime of the server process.
+    _stream_bytes_tracker.pop(stream_name, None)
+
     return stopped_components, kicked_count
 
 
@@ -619,6 +623,7 @@ def _pull_stream_loop(stream_name: str):
             with pull_stream_lock:
                 if stream_name in pull_stream_configs:
                     del pull_stream_configs[stream_name]
+            _externally_stopped.discard(stream_name)
             broadcast('pull_stream_failed', {'name': stream_name, 'reason': 'max_retries_exceeded'})
             break
 
@@ -647,9 +652,11 @@ def _pull_stream_loop(stream_name: str):
         # Check again after sleep — config may have been removed
         if stream_name not in pull_stream_configs:
             logger.info(f"Pull stream {stream_name} config removed during retry delay, stopping")
+            _externally_stopped.discard(stream_name)
             break
         if stream_name in active_pull_streams:
             logger.info(f"Pull stream {stream_name} already reconnected, stopping retry loop")
+            _externally_stopped.discard(stream_name)
             break
 
         # Start a new FFmpeg process
@@ -659,7 +666,7 @@ def _pull_stream_loop(stream_name: str):
             new_process = subprocess.Popen(
                 ffmpeg_args,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,  # Never read; PIPE would deadlock once the 64KB OS buffer fills
                 stderr=subprocess.PIPE
             )
             with pull_stream_lock:

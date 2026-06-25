@@ -57,6 +57,11 @@ STALL_CHECK_INTERVAL = 10   # seconds between stall checks
 STALL_TIMEOUT = 30          # seconds without playlist update = stall
 STARTUP_GRACE = 15          # seconds before stall detection kicks in
 
+# Audio probe cache: avoid running ffprobe on every ABR restart for the same source.
+# Format: {source_url: (has_audio: bool, timestamp: float)}
+_audio_probe_cache: dict = {}
+_AUDIO_CACHE_TTL = 120  # seconds before re-probing
+
 # Default ABR rendition presets
 DEFAULT_ABR_RENDITIONS = [
     {
@@ -223,7 +228,12 @@ class ABRManager:
 
             stream_dir = os.path.join(HLS_OUTPUT_DIR, stream_name)
 
-            self._cleanup_segments(stream_dir)
+            # Do NOT clean up existing segments here. Leaving old segments in
+            # place means clients get the previous playlist (with stale but
+            # valid segments) during the gap between start() and when FFmpeg
+            # writes its first new segment, avoiding a 404 window on
+            # explicit stop→start cycles. FFmpeg will overwrite segments as
+            # it progresses; stop() already performs the authoritative cleanup.
             os.makedirs(stream_dir, exist_ok=True)
 
             state = {
@@ -412,6 +422,13 @@ class ABRManager:
         """
         started_at = time.time()
 
+        # Resolve the settings reference once — it's a module-level dict so
+        # mutations made by the settings API are visible through this reference.
+        try:
+            from app.api.settings import server_settings
+        except Exception:
+            server_settings = {}
+
         while True:
             time.sleep(STALL_CHECK_INTERVAL)
 
@@ -428,11 +445,7 @@ class ABRManager:
             # Check for stall (after startup grace period)
             elapsed = time.time() - started_at
             if elapsed > STARTUP_GRACE:
-                try:
-                    from app.api.settings import server_settings
-                    stall_enabled = server_settings.get('stall_detection_enabled', True)
-                except Exception:
-                    stall_enabled = True
+                stall_enabled = server_settings.get('stall_detection_enabled', True)
                 if stall_enabled and self._is_stalled(state['stream_dir'], started_at):
                     return 'stall'
 
@@ -447,10 +460,24 @@ class ABRManager:
         Playlists older than started_at are from a previous run and are ignored
         (prevents false stall detection on startup when stale files exist on disk).
         """
+        # Resolve settings once at function entry instead of inside the loop.
+        try:
+            from app.api.settings import server_settings
+            stall_timeout = server_settings.get('stall_threshold_seconds', STALL_TIMEOUT)
+        except Exception:
+            stall_timeout = STALL_TIMEOUT
+
+        # Derive variant count from current rendition settings so a 3-rendition
+        # config (v0, v1, v2) is fully checked rather than capped at a hardcoded list.
+        try:
+            num_variants = max(len(_load_renditions_from_settings()), 1)
+        except Exception:
+            num_variants = 2
+
         newest_mtime = 0
         try:
-            for variant in ('v0', 'v1', 'v2'):
-                playlist = os.path.join(stream_dir, variant, 'index.m3u8')
+            for i in range(num_variants):
+                playlist = os.path.join(stream_dir, f'v{i}', 'index.m3u8')
                 if os.path.isfile(playlist):
                     mt = os.path.getmtime(playlist)
                     # Ignore files that predate this FFmpeg process
@@ -463,11 +490,6 @@ class ABRManager:
             return False  # No playlist written by this process yet - still starting
 
         age = time.time() - newest_mtime
-        try:
-            from app.api.settings import server_settings
-            stall_timeout = server_settings.get('stall_threshold_seconds', STALL_TIMEOUT)
-        except Exception:
-            stall_timeout = STALL_TIMEOUT
         if age > stall_timeout:
             logger.info(f"Stall check: playlist age={age:.0f}s > timeout={stall_timeout}s in {stream_dir}")
             return True
@@ -616,7 +638,18 @@ class ABRManager:
 
     @staticmethod
     def _source_has_audio(source_url: str) -> bool:
-        """Probe the RTSP source to check for audio tracks."""
+        """Probe the RTSP source to check for audio tracks.
+
+        Results are cached for _AUDIO_CACHE_TTL seconds to avoid spawning a
+        fresh ffprobe subprocess on every ABR restart for a flapping stream.
+        """
+        cached = _audio_probe_cache.get(source_url)
+        if cached is not None:
+            has_audio, ts = cached
+            if time.time() - ts < _AUDIO_CACHE_TTL:
+                return has_audio
+
+        has_audio = False
         try:
             transport = ABRManager._get_rtsp_transport()
             result = subprocess.run(
@@ -630,10 +663,12 @@ class ABRManager:
             )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
-                return len(data.get('streams', [])) > 0
+                has_audio = len(data.get('streams', [])) > 0
         except Exception:
             pass
-        return False
+
+        _audio_probe_cache[source_url] = (has_audio, time.time())
+        return has_audio
 
     @staticmethod
     def _close_ffmpeg_log(proc: subprocess.Popen):
