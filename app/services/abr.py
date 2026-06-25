@@ -49,13 +49,18 @@ ABR_STATE_FILE = os.path.join(DATA_DIR, 'abr_state.json')
 
 # HLS tuning
 HLS_LOW_LATENCY_MODE = os.environ.get('HLS_LOW_LATENCY_MODE', '').lower() == 'true'
-HLS_SEGMENT_DURATION = int(os.environ.get('HLS_SEGMENT_DURATION', 2 if HLS_LOW_LATENCY_MODE else 4))
+HLS_SEGMENT_DURATION = int(os.environ.get('HLS_SEGMENT_DURATION', 2))
 HLS_LIST_SIZE = int(os.environ.get('HLS_LIST_SIZE', 10))
 
 # Stall detection
 STALL_CHECK_INTERVAL = 10   # seconds between stall checks
 STALL_TIMEOUT = 30          # seconds without playlist update = stall
 STARTUP_GRACE = 15          # seconds before stall detection kicks in
+
+# Audio probe cache: avoid running ffprobe on every ABR restart for the same source.
+# Format: {source_url: (has_audio: bool, timestamp: float)}
+_audio_probe_cache: dict = {}
+_AUDIO_CACHE_TTL = 120  # seconds before re-probing
 
 # Default ABR rendition presets
 DEFAULT_ABR_RENDITIONS = [
@@ -222,11 +227,13 @@ class ABRManager:
                     return {'status': 'already_running', 'stream': stream_name}
 
             stream_dir = os.path.join(HLS_OUTPUT_DIR, stream_name)
-            # Remove any stale playlists/segments from a previous run.
-            # Without this, _playlist_response will return 503 "Playlist stale"
-            # until FFmpeg rewrites index.m3u8, which can take tens of seconds
-            # for high-bitrate sources (e.g. 4K H.265).
-            self._cleanup_segments(stream_dir)
+
+            # Do NOT clean up existing segments here. Leaving old segments in
+            # place means clients get the previous playlist (with stale but
+            # valid segments) during the gap between start() and when FFmpeg
+            # writes its first new segment, avoiding a 404 window on
+            # explicit stop→start cycles. FFmpeg will overwrite segments as
+            # it progresses; stop() already performs the authoritative cleanup.
             os.makedirs(stream_dir, exist_ok=True)
 
             state = {
@@ -285,14 +292,22 @@ class ABRManager:
             return {'running': False, 'stream': stream_name}
 
         proc = state.get('process')
-        running = proc is not None and proc.poll() is None
+        process_alive = proc is not None and proc.poll() is None
+
+        if process_alive:
+            stream_dir = state.get('stream_dir', os.path.join(HLS_OUTPUT_DIR, stream_name))
+            master = os.path.join(stream_dir, 'master.m3u8')
+            elapsed = time.time() - state.get('started_at', 0)
+            if elapsed > STARTUP_GRACE and not os.path.isfile(master):
+                process_alive = False
 
         return {
             'running': state.get('active', False),
+            'process_alive': process_alive,
             'stream': stream_name,
             'pid': proc.pid if proc else None,
             'restart_count': state.get('restart_count', 0),
-            'uptime_seconds': int(time.time() - state['started_at']) if running else 0,
+            'uptime_seconds': int(time.time() - state['started_at']) if process_alive else 0,
         }
 
     def list_active(self) -> list:
@@ -407,6 +422,13 @@ class ABRManager:
         """
         started_at = time.time()
 
+        # Resolve the settings reference once — it's a module-level dict so
+        # mutations made by the settings API are visible through this reference.
+        try:
+            from app.api.settings import server_settings
+        except Exception:
+            server_settings = {}
+
         while True:
             time.sleep(STALL_CHECK_INTERVAL)
 
@@ -423,11 +445,7 @@ class ABRManager:
             # Check for stall (after startup grace period)
             elapsed = time.time() - started_at
             if elapsed > STARTUP_GRACE:
-                try:
-                    from app.api.settings import server_settings
-                    stall_enabled = server_settings.get('stall_detection_enabled', True)
-                except Exception:
-                    stall_enabled = True
+                stall_enabled = server_settings.get('stall_detection_enabled', True)
                 if stall_enabled and self._is_stalled(state['stream_dir'], started_at):
                     return 'stall'
 
@@ -442,10 +460,24 @@ class ABRManager:
         Playlists older than started_at are from a previous run and are ignored
         (prevents false stall detection on startup when stale files exist on disk).
         """
+        # Resolve settings once at function entry instead of inside the loop.
+        try:
+            from app.api.settings import server_settings
+            stall_timeout = server_settings.get('stall_threshold_seconds', STALL_TIMEOUT)
+        except Exception:
+            stall_timeout = STALL_TIMEOUT
+
+        # Derive variant count from current rendition settings so a 3-rendition
+        # config (v0, v1, v2) is fully checked rather than capped at a hardcoded list.
+        try:
+            num_variants = max(len(_load_renditions_from_settings()), 1)
+        except Exception:
+            num_variants = 2
+
         newest_mtime = 0
         try:
-            for variant in ('v0', 'v1', 'v2'):
-                playlist = os.path.join(stream_dir, variant, 'index.m3u8')
+            for i in range(num_variants):
+                playlist = os.path.join(stream_dir, f'v{i}', 'index.m3u8')
                 if os.path.isfile(playlist):
                     mt = os.path.getmtime(playlist)
                     # Ignore files that predate this FFmpeg process
@@ -458,11 +490,6 @@ class ABRManager:
             return False  # No playlist written by this process yet - still starting
 
         age = time.time() - newest_mtime
-        try:
-            from app.api.settings import server_settings
-            stall_timeout = server_settings.get('stall_threshold_seconds', STALL_TIMEOUT)
-        except Exception:
-            stall_timeout = STALL_TIMEOUT
         if age > stall_timeout:
             logger.info(f"Stall check: playlist age={age:.0f}s > timeout={stall_timeout}s in {stream_dir}")
             return True
@@ -483,8 +510,8 @@ class ABRManager:
         # Redirect stderr to a log file instead of PIPE to prevent deadlock.
         # subprocess.PIPE has a ~64KB OS buffer; if FFmpeg fills it and nobody
         # reads, FFmpeg blocks on write() and the stream freezes.
-        os.makedirs(FFMPEG_LOG_DIR, exist_ok=True)
         log_path = os.path.join(FFMPEG_LOG_DIR, f'{stream_name}.log')
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
         try:
             stderr_file = open(log_path, 'w')
         except OSError as e:
@@ -521,24 +548,25 @@ class ABRManager:
             'ffmpeg',
             '-loglevel', 'warning',   # Suppress frame= progress lines (prevents log bloat)
             '-rtsp_transport', self._get_rtsp_transport(),
-            # Tolerate H.265 reference-frame errors and regenerate PTS so the
-            # filter chain never sees huge timestamp gaps (which cause ~1000 frame
-            # duplications and stall the first HLS segment from being written).
             '-err_detect', 'ignore_err',
             '-fflags', '+genpts+discardcorrupt+nobuffer',
             '-flags', 'low_delay',
-            '-analyzeduration', '2000000',
-            '-probesize', '2000000',
+            '-analyzeduration', '5000000',
+            '-probesize', '10000000',
             '-i', source_url,
         ]
 
         # Build filter complex for scaling
+        # format=yuv420p is explicit here so that high-bit-depth inputs (e.g. 10-bit AV1,
+        # 10-bit HEVC) are correctly converted before reaching the libx264 encoder,
+        # which requires 8-bit yuv420p.
         filter_parts = []
         for idx, r in enumerate(renditions):
             w, h = r['width'], r['height']
             filter_parts.append(
                 f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[v{idx}]"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+                f"format=yuv420p[v{idx}]"
             )
         cmd += ['-filter_complex', ';'.join(filter_parts)]
 
@@ -550,12 +578,12 @@ class ABRManager:
                 '-preset', 'ultrafast',
                 '-tune', 'zerolatency',
                 f'-profile:v:{idx}', r['profile'],
-                f'-level:v:{idx}', r['level'],
                 '-pix_fmt', 'yuv420p',
+                '-r', '30',
                 f'-b:v:{idx}', r['video_bitrate'],
                 f'-maxrate:v:{idx}', r['max_rate'],
                 f'-bufsize:v:{idx}', r['buf_size'],
-                '-g', str(HLS_SEGMENT_DURATION * 30),  # GOP = segment duration * fps
+                '-g', str(HLS_SEGMENT_DURATION * 30),
                 '-keyint_min', str(HLS_SEGMENT_DURATION * 30),
                 '-sc_threshold', '0',
             ]
@@ -610,7 +638,18 @@ class ABRManager:
 
     @staticmethod
     def _source_has_audio(source_url: str) -> bool:
-        """Probe the RTSP source to check for audio tracks."""
+        """Probe the RTSP source to check for audio tracks.
+
+        Results are cached for _AUDIO_CACHE_TTL seconds to avoid spawning a
+        fresh ffprobe subprocess on every ABR restart for a flapping stream.
+        """
+        cached = _audio_probe_cache.get(source_url)
+        if cached is not None:
+            has_audio, ts = cached
+            if time.time() - ts < _AUDIO_CACHE_TTL:
+                return has_audio
+
+        has_audio = False
         try:
             transport = ABRManager._get_rtsp_transport()
             result = subprocess.run(
@@ -624,10 +663,12 @@ class ABRManager:
             )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
-                return len(data.get('streams', [])) > 0
+                has_audio = len(data.get('streams', [])) > 0
         except Exception:
             pass
-        return False
+
+        _audio_probe_cache[source_url] = (has_audio, time.time())
+        return has_audio
 
     @staticmethod
     def _close_ffmpeg_log(proc: subprocess.Popen):

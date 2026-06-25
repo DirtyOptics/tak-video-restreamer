@@ -20,7 +20,7 @@ import logging
 import requests as http_requests
 from flask import Blueprint, jsonify, request, send_from_directory, abort, Response
 
-from app.services.abr import abr_manager, HLS_OUTPUT_DIR
+from app.services.abr import abr_manager, HLS_OUTPUT_DIR, HLS_SEGMENT_DURATION, HLS_LIST_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,7 @@ def _playlist_response(filepath, check_abr_stream=None):
     # Threshold: segment_duration * (list_size + 2) seconds — generous enough
     # that a single slow segment doesn't trigger this.
     try:
-        SEGMENT_DURATION = int(os.environ.get('HLS_SEGMENT_DURATION', 4))
-        LIST_SIZE = int(os.environ.get('HLS_LIST_SIZE', 10))
-        stale_threshold = SEGMENT_DURATION * (LIST_SIZE + 2)
+        stale_threshold = HLS_SEGMENT_DURATION * (HLS_LIST_SIZE + 2)
         if check_abr_stream and (time.time() - os.path.getmtime(filepath)) > stale_threshold:
             resp = Response('Playlist stale', status=503,
                             mimetype='application/vnd.apple.mpegurl')
@@ -88,7 +86,14 @@ def _playlist_response(filepath, check_abr_stream=None):
 
 
 def _valid_stream(name):
-    return bool(name) and re.match(r'^[a-zA-Z0-9_.-]+$', name) and len(name) <= 128
+    return (
+        bool(name)
+        and len(name) <= 128
+        and re.match(r'^[a-zA-Z0-9_./-]+$', name) is not None
+        and '..' not in name
+        and not name.startswith('/')
+        and not name.endswith('/')
+    )
 
 
 # ------------------------------------------------------------------
@@ -133,6 +138,16 @@ def serve_master_playlist(stream_name):
     if not _valid_stream(stream_name):
         abort(400)
     filepath = os.path.join(HLS_OUTPUT_DIR, stream_name, 'master.m3u8')
+
+    if not os.path.isfile(filepath):
+        status = abr_manager.status(stream_name)
+
+        if status.get('running', False) and status.get('process_alive', False):
+            resp = Response('Stream starting', status=503,
+                            mimetype='text/plain')
+            resp.headers['Retry-After'] = '2'
+            resp.headers['Cache-Control'] = 'no-cache, no-store'
+            return _cors(resp)
     return _cors(_playlist_response(filepath))
 
 
@@ -289,9 +304,11 @@ def _serve_player_page(stream_name):
                     switch (data.type) {{
                         case Hls.ErrorTypes.NETWORK_ERROR:
                             console.log('Fatal network error, retrying...');
-                            statusDiv.textContent = 'Reconnecting...';
+                            statusDiv.textContent = 'Waiting for stream source\u2026';
                             statusDiv.style.display = 'block';
-                            hls.startLoad();
+                            setTimeout(function() {{
+                                if (hls) hls.startLoad();
+                            }}, 3000);
                             break;
                         case Hls.ErrorTypes.MEDIA_ERROR:
                             if (mediaRecoveryAttempts < maxMediaRecovery) {{

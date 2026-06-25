@@ -19,11 +19,14 @@ class MediaMTXClient:
     
     def __init__(self, api_url: str):
         self.api_url = api_url
+        # Persistent session enables HTTP keep-alive connection pooling, avoiding
+        # TCP setup overhead on every API call (health checks, stream listing, etc.).
+        self._session = requests.Session()
     
     def list_paths(self, timeout: int = 5) -> Optional[Dict]:
         """List all active paths from MediaMTX"""
         try:
-            response = requests.get(f'{self.api_url}/v3/paths/list/', timeout=timeout)
+            response = self._session.get(f'{self.api_url}/v3/paths/list/', timeout=timeout)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -33,7 +36,7 @@ class MediaMTXClient:
     def get_path(self, path_name: str, timeout: int = 5) -> Optional[Dict]:
         """Get specific path details. Returns None if path not found (404)."""
         try:
-            response = requests.get(f'{self.api_url}/v3/paths/get/{path_name}', timeout=timeout)
+            response = self._session.get(f'{self.api_url}/v3/paths/get/{path_name}', timeout=timeout)
             if response.status_code == 404:
                 return None  # Path has no active publisher — not an error
             response.raise_for_status()
@@ -53,7 +56,7 @@ class MediaMTXClient:
         """
         try:
             payload = config or {'source': 'publisher'}
-            response = requests.post(
+            response = self._session.post(
                 f'{self.api_url}/v3/config/paths/add/{path_name}',
                 json=payload,
                 timeout=timeout
@@ -66,7 +69,7 @@ class MediaMTXClient:
             logger.debug(
                 f"add_path POST failed for {path_name} ({response.status_code}), trying PATCH"
             )
-            patch_resp = requests.patch(
+            patch_resp = self._session.patch(
                 f'{self.api_url}/v3/config/paths/patch/{path_name}',
                 json=payload,
                 timeout=timeout
@@ -87,13 +90,26 @@ class MediaMTXClient:
     def delete_path(self, path_name: str, timeout: int = 5) -> bool:
         """Delete a path configuration"""
         try:
-            response = requests.delete(
+            response = self._session.delete(
                 f'{self.api_url}/v3/config/paths/delete/{path_name}',
                 timeout=timeout
             )
             return response.status_code in [200, 204]
         except Exception as e:
             logger.error(f"Error deleting path {path_name}: {e}")
+            return False
+
+    def patch_global_config(self, payload: dict, timeout: int = 5) -> bool:
+        """Patch MediaMTX global configuration at runtime."""
+        try:
+            response = self._session.patch(
+                f'{self.api_url}/v3/config/global/patch',
+                json=payload,
+                timeout=timeout
+            )
+            return response.status_code in [200, 204]
+        except Exception as e:
+            logger.error(f"Error patching global config: {e}")
             return False
     
     # MediaMTX v1.16 has per-protocol endpoints, no generic /connections/
@@ -109,7 +125,7 @@ class MediaMTXClient:
         conn_type is the endpoint prefix, e.g. 'srtconns', 'rtspsessions'.
         """
         try:
-            response = requests.post(
+            response = self._session.post(
                 f'{self.api_url}/v3/{conn_type}/kick/{connection_id}/',
                 timeout=timeout
             )
@@ -127,7 +143,7 @@ class MediaMTXClient:
         all_connections = []
         for endpoint, _label in self._CONN_ENDPOINTS:
             try:
-                response = requests.get(
+                response = self._session.get(
                     f'{self.api_url}/v3/{endpoint}/list/', timeout=timeout
                 )
                 if response.status_code == 200:

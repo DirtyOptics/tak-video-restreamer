@@ -9,6 +9,7 @@ Application state management
 Global state that needs to be shared across modules
 """
 import threading
+import atexit
 from typing import Dict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -41,6 +42,11 @@ hidden_streams: set = set()
 # Thread pools
 thumbnail_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="thumbnail")
 post_process_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="postproc")
+
+# Ensure in-flight thumbnail/post-process jobs finish cleanly on shutdown
+# rather than being killed mid-write (which can produce corrupt output files).
+atexit.register(thumbnail_executor.shutdown, wait=True)
+atexit.register(post_process_executor.shutdown, wait=True)
 
 
 # SRT buffer manager singleton

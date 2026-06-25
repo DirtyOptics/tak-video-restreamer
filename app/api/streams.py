@@ -164,7 +164,7 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
     process = subprocess.Popen(
         ffmpeg_args,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,  # Never read; PIPE would deadlock once the 64KB OS buffer fills
         stderr=subprocess.PIPE
     )
 
@@ -211,6 +211,16 @@ def _restore_pull_streams():
             if not source_url:
                 continue
             try:
+                # Re-register the named path in MediaMTX (lost on restart).
+                # Without this, the path only appears if it matches a catch-all
+                # regex rule, which may not create a proper named entry.
+                mediamtx.add_path(stream_name, {
+                    'source': 'publisher',
+                    'overridePublisher': True,
+                })
+                # Remove from hidden_streams in case it was hidden before restart
+                with hidden_streams_lock:
+                    hidden_streams.discard(stream_name)
                 _start_pull_impl(
                     stream_name,
                     source_url,
@@ -305,6 +315,15 @@ def _resolve_source_info(source: dict | None, conn_map: dict | None = None) -> d
     return {'protocol': protocol, 'sourceAddress': address}
 
 
+HLS_MUXABLE_CODECS = {'AV1', 'VP9', 'H265', 'H264', 'Opus', 'MPEG-4 Audio'}
+
+
+def _needs_transcode(tracks: list) -> bool:
+    if not tracks:
+        return False
+    return not any(track in HLS_MUXABLE_CODECS for track in tracks)
+
+
 def _extract_stream_info(path_name: str, path_info: dict, conn_map: dict | None = None) -> dict:
     """Extract stream info from a MediaMTX path entry (deduplicates list/dict handling)."""
     readers = path_info.get('readers', [])
@@ -352,6 +371,8 @@ def _extract_stream_info(path_name: str, path_info: dict, conn_map: dict | None 
     else:
         last_data_time = prev['last_change']
 
+    tracks = path_info.get('tracks') or []
+
     return {
         'name': path_name,
         'ready': path_info.get('ready', False),
@@ -362,6 +383,8 @@ def _extract_stream_info(path_name: str, path_info: dict, conn_map: dict | None 
         'protocol': source_info['protocol'],
         'sourceAddress': source_info['sourceAddress'],
         'sourceUrl': source_url,
+        'tracks': tracks,
+        'needsTranscode': _needs_transcode(tracks),
         'lastDataTime': datetime.fromtimestamp(last_data_time, tz=timezone.utc).isoformat() if bytes_received > 0 else None,
     }
 
@@ -411,8 +434,10 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
                 _remove_pull_source(stream_name)
             else:
                 pull_stream_configs[stream_name]['auto_retry'] = False
-        # Mark as externally stopped so the monitor loop exits without re-broadcasting
-        _externally_stopped.add(stream_name)
+            # Mark as externally stopped so the pull monitor loop exits
+            # without re-broadcasting. Only meaningful for pull streams; the
+            # loop discards this flag itself on exit.
+            _externally_stopped.add(stream_name)
 
     # Stop test pattern publishers if active
     from app.api.test import active_tests
@@ -442,17 +467,30 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
                     kicked_count += 1
                     logger.info(f"Kicked {conn_type} connection {conn_id} for stream {stream_name}")
 
-    # Remove the path from MediaMTX so it no longer appears in the stream list
+    # Remove the path from MediaMTX so a fresh publisher session can register
+    # cleanly under the same name. Without this, MediaMTX may retain a stale
+    # path entry tied to the kicked publisher and reject reconnects under the
+    # original name (workaround was to rename, e.g. flex -> flex-ops).
+    if mediamtx.delete_path(stream_name):
+        logger.info(f"Deleted MediaMTX path config for: {stream_name}")
+        stopped_components.append('mediamtx path')
+    else:
+        logger.debug(f"No explicit config to delete for {stream_name} (regex-matched or already gone)")
+
     if remove_pull_config:
-        if mediamtx.delete_path(stream_name):
-            logger.info(f"Deleted MediaMTX path config for: {stream_name}")
-            stopped_components.append('mediamtx path')
-        else:
-            logger.info(f"No explicit config for {stream_name} (regex-matched)")
         # Hide phantom paths that linger because of regex catch-all configs
         with hidden_streams_lock:
             hidden_streams.add(stream_name)
         logger.info(f"Marked {stream_name} as hidden")
+    else:
+        # Stop (not delete): allow the same name to be reused immediately by
+        # clearing any prior hidden-state so the next publisher reappears.
+        with hidden_streams_lock:
+            hidden_streams.discard(stream_name)
+
+    # Remove bytes tracker entry so it doesn't grow without bound across many
+    # transient streams over the lifetime of the server process.
+    _stream_bytes_tracker.pop(stream_name, None)
 
     return stopped_components, kicked_count
 
@@ -468,6 +506,10 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
         args.extend([
             '-rtsp_transport', transport,
             '-timeout', str(timeout_us),
+            # Hard per-read timeout so FFmpeg fails fast if the device connects
+            # but stops sending data (e.g. GStreamer server starts before encoding).
+            # Without this, FFmpeg hangs for several minutes before giving up.
+            '-rw_timeout', str(timeout_us),
         ])
     args.extend([
         '-buffer_size', str(PULL_STREAM_BUFFER_SIZE),
@@ -485,14 +527,17 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
         ])
     args.extend([
         '-i', source_url,
+        # Map all tracks (video, audio, KLV/data) so KLV metadata is preserved
         '-map', '0',
         '-err_detect', 'ignore_err',
         '-fflags', '+genpts+discardcorrupt+nobuffer',
         '-flags', 'low_delay',
         '-c', 'copy',
-        '-f', 'rtsp',
-        '-rtsp_transport', transport,
-        f'rtsp://localhost:8554/{stream_name}'
+        # Republish over SRT/MPEG-TS rather than RTSP/RTP so KLV data tracks
+        # (and any other non-AV streams) are carried losslessly. RTP cannot
+        # carry KLV, which is a core TAK requirement.
+        '-f', 'mpegts',
+        f'srt://localhost:8890?streamid=publish:{stream_name}'
     ])
     return args
 
@@ -578,6 +623,7 @@ def _pull_stream_loop(stream_name: str):
             with pull_stream_lock:
                 if stream_name in pull_stream_configs:
                     del pull_stream_configs[stream_name]
+            _externally_stopped.discard(stream_name)
             broadcast('pull_stream_failed', {'name': stream_name, 'reason': 'max_retries_exceeded'})
             break
 
@@ -606,9 +652,11 @@ def _pull_stream_loop(stream_name: str):
         # Check again after sleep — config may have been removed
         if stream_name not in pull_stream_configs:
             logger.info(f"Pull stream {stream_name} config removed during retry delay, stopping")
+            _externally_stopped.discard(stream_name)
             break
         if stream_name in active_pull_streams:
             logger.info(f"Pull stream {stream_name} already reconnected, stopping retry loop")
+            _externally_stopped.discard(stream_name)
             break
 
         # Start a new FFmpeg process
@@ -618,7 +666,7 @@ def _pull_stream_loop(stream_name: str):
             new_process = subprocess.Popen(
                 ffmpeg_args,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,  # Never read; PIPE would deadlock once the 64KB OS buffer fills
                 stderr=subprocess.PIPE
             )
             with pull_stream_lock:

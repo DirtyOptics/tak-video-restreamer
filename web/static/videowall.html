@@ -144,7 +144,7 @@ This is distributed in the hope that it will be useful, but without any warranty
                 const overlay = cell.querySelector('.vw-overlay');
                 const status = cell.querySelector('.vw-status');
 
-                const state = { hls: null, mediaRecovery: 0 };
+                const state = { hls: null, mediaRecovery: 0, stallTimer: null, stallHandlers: null, assignedStream: null, waitingForStream: false };
                 cells.push({ select, video, overlay, status, state });
 
                 select.addEventListener('change', () => { loadCell(i, select.value); saveState(); });
@@ -156,24 +156,67 @@ This is distributed in the hope that it will be useful, but without any warranty
             }
         }
 
-        function destroyCell(idx) {
+        function destroyCell(idx, keepOverlay) {
             const { state, video, overlay, status } = cells[idx];
+            if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+            if (state.stallHandlers) {
+                video.removeEventListener('waiting', state.stallHandlers.waiting);
+                video.removeEventListener('playing', state.stallHandlers.playing);
+                state.stallHandlers = null;
+            }
             if (state.hls) {
                 state.hls.destroy();
                 state.hls = null;
             }
             video.src = '';
             video.style.display = 'none';
-            overlay.textContent = 'No stream selected';
-            overlay.className = 'vw-overlay';
+            if (!keepOverlay) {
+                overlay.textContent = 'No stream selected';
+                overlay.className = 'vw-overlay';
+            }
             status.style.display = 'none';
             state.mediaRecovery = 0;
         }
 
-        function loadCell(idx, streamName) {
-            destroyCell(idx);
+        async function loadCell(idx, streamName) {
+            const wasPlaying = !!(cells[idx].state.hls || cells[idx].video.src);
+            destroyCell(idx, wasPlaying && !!streamName);
+            cells[idx].state.assignedStream = streamName || null;
+            cells[idx].state.waitingForStream = false;
             if (!streamName) return;
-            _loadCellWithSrc(idx, streamName, `/api/hls/proxy/${encodeURIComponent(streamName)}/index.m3u8?videoonly=1`, false);
+            cells[idx].overlay.textContent = 'Reconnecting…';
+            cells[idx].overlay.className = 'vw-overlay active';
+
+            const meta = lastStreams.find(s => s.name === streamName);
+            const needsTranscode = !!(meta && meta.needsTranscode);
+
+            let abrRunning = false;
+            try {
+                const resp = await fetch(`/api/streams/${encodeURIComponent(streamName)}/abr/status`);
+                const data = resp.ok ? await resp.json() : {};
+                abrRunning = !!data.running;
+            } catch { /* fall through */ }
+
+            if (needsTranscode && !abrRunning) {
+                const { overlay, video, status } = cells[idx];
+                overlay.textContent = 'Transcoding…';
+                overlay.className = 'vw-overlay active';
+                video.style.display = 'none';
+                status.style.display = 'none';
+                try {
+                    await fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' });
+                } catch {}
+                setTimeout(() => {
+                    _loadCellWithSrc(idx, streamName, `/hls/${encodeURIComponent(streamName)}/master.m3u8`, true);
+                }, 6000);
+                return;
+            }
+
+            const useTranscode = abrRunning || needsTranscode;
+            const src = useTranscode
+                ? `/hls/${encodeURIComponent(streamName)}/master.m3u8`
+                : `/api/hls/proxy/${encodeURIComponent(streamName)}/index.m3u8?videoonly=1`;
+            _loadCellWithSrc(idx, streamName, src, useTranscode);
         }
 
         function _loadCellWithSrc(idx, streamName, src, isTranscodeFallback) {
@@ -201,6 +244,8 @@ This is distributed in the hope that it will be useful, but without any warranty
                 debug: false,
                 enableWorker: true,
                 lowLatencyMode: true,
+                liveSyncDurationCount: 2,
+                maxBufferLength: 10,
                 backBufferLength: 8,
                 liveBackBufferLength: 8
             });
@@ -215,16 +260,89 @@ This is distributed in the hope that it will be useful, but without any warranty
                 overlay.textContent = '';
                 overlay.className = 'vw-overlay';
                 status.style.display = 'none';
+                // Stall detection: video.waiting fires the moment the player runs out of
+                // buffered data. If playback doesn't resume within 8s, the source is gone.
+                if (state.stallHandlers) {
+                    video.removeEventListener('waiting', state.stallHandlers.waiting);
+                    video.removeEventListener('playing', state.stallHandlers.playing);
+                }
+                const onWaiting = () => {
+                    if (state.stallTimer) return;
+                    state.stallTimer = setTimeout(() => {
+                        state.stallTimer = null;
+                        overlay.textContent = 'Waiting for video…';
+                        overlay.className = 'vw-overlay active';
+                        video.style.display = 'none';
+                        status.style.display = 'none';
+                        if (state.hls) { state.hls.destroy(); state.hls = null; }
+                        setTimeout(() => loadCell(idx, streamName), 3000);
+                    }, 8000);
+                };
+                const onPlaying = () => {
+                    if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+                };
+                state.stallHandlers = { waiting: onWaiting, playing: onPlaying };
+                video.addEventListener('waiting', onWaiting);
+                video.addEventListener('playing', onPlaying);
                 video.play().catch(() => {});
             });
 
             hls.on(Hls.Events.ERROR, function(event, data) {
                 if (!data.fatal) return;
+                const httpStatus = data.response && data.response.code;
                 switch (data.type) {
                     case Hls.ErrorTypes.NETWORK_ERROR:
-                        status.textContent = 'Reconnecting…';
-                        status.style.display = 'block';
-                        hls.startLoad();
+                        if (!isTranscodeFallback) {
+                            hls.destroy();
+                            state.hls = null;
+                            video.style.display = 'none';
+                            status.style.display = 'none';
+                            fetch(`/api/streams/${encodeURIComponent(streamName)}/abr/status`)
+                                .then(r => r.ok ? r.json() : {})
+                                .then(s => {
+                                    if (s && s.running) {
+                                        overlay.textContent = 'Waiting for source\u2026';
+                                        overlay.className = 'vw-overlay active';
+                                        setTimeout(() => {
+                                            if (cells[idx].state.assignedStream !== streamName) return;
+                                            loadCell(idx, streamName);
+                                        }, 10000);
+                                    } else {
+                                        overlay.textContent = 'Transcoding…';
+                                        overlay.className = 'vw-overlay active';
+                                        return fetch(`/api/streams/${encodeURIComponent(streamName)}/abr`, { method: 'POST' })
+                                            .then(() => setTimeout(() => {
+                                                if (cells[idx].state.assignedStream !== streamName) return;
+                                                const abrSrc = `/hls/${encodeURIComponent(streamName)}/master.m3u8`;
+                                                _loadCellWithSrc(idx, streamName, abrSrc, true);
+                                            }, 6000));
+                                    }
+                                })
+                                .catch(() => setTimeout(() => loadCell(idx, streamName), 5000));
+                        } else if (httpStatus === 503) {
+                            hls.destroy();
+                            state.hls = null;
+                            overlay.textContent = 'Waiting for source\u2026';
+                            overlay.className = 'vw-overlay active';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
+                            setTimeout(() => {
+                                if (cells[idx].state.assignedStream !== streamName) return;
+                                _loadCellWithSrc(idx, streamName, src, true);
+                            }, 5000);
+                        } else {
+
+                            hls.destroy();
+                            state.hls = null;
+                            overlay.textContent = 'Waiting for source\u2026';
+                            overlay.className = 'vw-overlay active';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
+                            setTimeout(() => {
+                                if (cells[idx].state.assignedStream !== streamName) return;
+                                loadCell(idx, streamName);
+                            }, 10000);
+                        }
                         break;
                     case Hls.ErrorTypes.MEDIA_ERROR:
                         if (state.mediaRecovery < 3) {
@@ -253,18 +371,22 @@ This is distributed in the hope that it will be useful, but without any warranty
                             hls.destroy();
                             state.hls = null;
                             state.mediaRecovery = 0;
+                            overlay.textContent = 'Reconnecting…';
+                            overlay.className = 'vw-overlay active';
+                            video.style.display = 'none';
+                            status.style.display = 'none';
                             setTimeout(() => loadCell(idx, streamName), 5000);
-                            status.textContent = 'Reloading…';
-                            status.style.display = 'block';
                         }
                         break;
                     default:
                         hls.destroy();
                         state.hls = null;
                         state.mediaRecovery = 0;
+                        overlay.textContent = 'Reconnecting…';
+                        overlay.className = 'vw-overlay active';
+                        video.style.display = 'none';
+                        status.style.display = 'none';
                         setTimeout(() => loadCell(idx, streamName), 3000);
-                        status.textContent = 'Reloading…';
-                        status.style.display = 'block';
                         break;
                 }
             });
@@ -277,16 +399,42 @@ This is distributed in the hope that it will be useful, but without any warranty
                 opt.textContent = s.name + (s.ready ? '' : ' (offline)');
                 return opt;
             });
-            cells.forEach(({ select }, idx) => {
-                const current = select.value;
-                // Remove all options except first (empty)
+            cells.forEach(({ select, state, video, overlay, status }, idx) => {
+                const assigned = state.assignedStream;
+                // Rebuild options
                 while (select.options.length > 1) select.remove(1);
                 options.forEach(opt => select.appendChild(opt.cloneNode(true)));
-                // Restore selection if still valid
-                if (current && streams.find(s => s.name === current)) {
-                    select.value = current;
-                } else {
-                    select.value = '';
+                // Make sure the assigned stream is in the dropdown even if currently offline
+                if (assigned && !streams.find(s => s.name === assigned)) {
+                    const opt = document.createElement('option');
+                    opt.value = assigned;
+                    opt.textContent = assigned + ' (offline)';
+                    select.appendChild(opt);
+                }
+                select.value = assigned || '';
+
+                if (!assigned) return;
+                const streamInfo = streams.find(s => s.name === assigned);
+                const streamReady = !!(streamInfo && streamInfo.ready);
+                if (!streamReady && !state.waitingForStream) {
+                    // Source went away — tear down playback, show waiting state
+                    state.waitingForStream = true;
+                    if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+                    if (state.stallHandlers) {
+                        video.removeEventListener('waiting', state.stallHandlers.waiting);
+                        video.removeEventListener('playing', state.stallHandlers.playing);
+                        state.stallHandlers = null;
+                    }
+                    if (state.hls) { state.hls.destroy(); state.hls = null; }
+                    video.src = '';
+                    video.style.display = 'none';
+                    status.style.display = 'none';
+                    overlay.textContent = 'Waiting for video…';
+                    overlay.className = 'vw-overlay active';
+                } else if (streamReady && state.waitingForStream) {
+                    // Source returned — auto-reload
+                    state.waitingForStream = false;
+                    loadCell(idx, assigned);
                 }
             });
         }
