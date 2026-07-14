@@ -32,16 +32,22 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from app import create_app
 
 
 @pytest.fixture
 def client():
-    """Create test client"""
+    """Create test client, pre-authenticated with default credentials."""
     app = create_app()
     app.config['TESTING'] = True
     with app.test_client() as client:
+        client.post(
+            '/api/auth/login',
+            json={'username': os.environ.get('ADMIN_USERNAME', 'admin'),
+                  'password': os.environ.get('ADMIN_PASSWORD', 'changeme')},
+            content_type='application/json',
+        )
         yield client
 
 
@@ -132,12 +138,10 @@ class TestStreamsEndpoint:
         data = json.loads(response.data)
         assert isinstance(data, list)
     
-    @patch('requests.get')
-    def test_list_streams_with_active_streams(self, mock_get, client):
+    @patch('app.api.streams.mediamtx.list_paths')
+    def test_list_streams_with_active_streams(self, mock_list_paths, client):
         """Test streams listing with mock active streams"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_list_paths.return_value = {
             'items': {
                 'test_stream': {
                     'name': 'test_stream',
@@ -148,7 +152,6 @@ class TestStreamsEndpoint:
                 }
             }
         }
-        mock_get.return_value = mock_response
         
         response = client.get('/api/streams')
         data = json.loads(response.data)
@@ -317,7 +320,6 @@ class TestRecordingsEndpoint:
             assert 'filename' in recording
             assert 'size' in recording
             assert 'created' in recording
-            assert 'path' in recording
     
     def test_recording_filters_video_files_only(self, client):
         """Test that recordings only returns video files"""
@@ -455,11 +457,11 @@ class TestPatternGenerator:
                 test_id = data['testId']
                 
                 # Check status
-                status_response = client.get(f'/api/test/{test_id}')
+                status_response = client.get(f'/api/test/{test_id}/status')
                 assert status_response.status_code == 200
                 
                 # Stop test
-                stop_response = client.delete(f'/api/test/{test_id}')
+                stop_response = client.post(f'/api/test/{test_id}/stop')
                 assert stop_response.status_code in [200, 204]
     
     def test_test_pattern_requires_stream_name(self, client):

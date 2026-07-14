@@ -305,7 +305,7 @@ class UnifiedKLVParser:
                     raw = struct.unpack('>H', data)[0]
                     # Map 0-65535 to 0-360 degrees
                     return (raw * 360.0 / 65535.0), raw_value
-                return raw_hex, raw_value
+                return raw_value, raw_value
                     
             # Tags 6,7: Platform Pitch/Roll Angle (2 bytes, IMAPB, -20 to +20°)
             elif tag in [6, 7]:
@@ -313,19 +313,19 @@ class UnifiedKLVParser:
                     raw = struct.unpack('>H', data)[0]
                     # Map 0-65535 to -20 to +20 degrees
                     return (raw - 32767.5) * (40.0 / 65535.0), raw_value
-                return raw_hex, raw_value
+                return raw_value, raw_value
                     
             # Tag 8: Platform True Airspeed (1 byte, uint8, 0-255 m/s)
             elif tag == 8:
                 if len(data) == 1:
                     return struct.unpack('B', data)[0], raw_value
-                return raw_hex, raw_value
+                return raw_value, raw_value
                     
             # Tag 9: Platform Indicated Airspeed (1 byte, uint8, 0-255 m/s)
             elif tag == 9:
                 if len(data) == 1:
                     return struct.unpack('B', data)[0], raw_value
-                return raw_hex, raw_value
+                return raw_value, raw_value
             
             # Tag 12: Image Coordinate System (variable length string)
             elif tag == 12:

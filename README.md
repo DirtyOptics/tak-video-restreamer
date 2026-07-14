@@ -28,15 +28,14 @@
 
 ## Overview
 
-Professional TAK video restreaming server built with Flask, MediaMTX, and FFmpeg for multi-protocol video streaming with advanced KLV metadata processing capabilities. Supports RTSP, RTSPS, SRT, HLS, and WebRTC with automatic recording, thumbnail generation, and real-time monitoring.
+Flask + MediaMTX + FFmpeg server that ingests video from drones, cameras, and encoding tools over RTSP/RTSPS/SRT/RTMP and makes it available to ATAK, WinTAK, CloudTAK, browsers, and any HLS or RTSP client. Comes with a web UI for stream monitoring, recording, and KLV metadata extraction.
 
-**Key highlights:**
-- **Authentication & Security** — Session login, API keys, rate limiting, audit logging
-- **ABR HLS Streaming** — Adaptive bitrate with configurable renditions
-- **HLS CORS Proxy** — Embed streams in external web apps (VideoJS, etc.)
-- **RTSPS (TLS)** — Encrypted RTSP on port 8555 with in-app certificate management
-- **Stream Standby** — Persistent stream state after publisher disconnect
-- **Docker HEALTHCHECK** — Built-in container health monitoring
+- **ABR HLS** — Adaptive bitrate transcoding with configurable renditions
+- **Authentication** — Session login, API keys, rate limiting, audit logging
+- **CORS Proxy** — Embed HLS streams in external apps without cross-origin issues
+- **RTSPS** — Encrypted RTSP on port 8555 with in-app certificate management
+- **Stream Standby** — Holds stream state when a publisher disconnects
+- **MPEG-TS demuxing** — UAS/drone feeds carrying MPEG-TS over RTSP are automatically unwrapped into elementary tracks so CloudTAK and other external consumers can play them directly
 
 ----
 
@@ -216,7 +215,7 @@ For environment variables and port configuration, see [Configuration](#configura
 ## Architecture
 
 - **Flask 3.0** (Python 3.11) — REST API and WebSocket server (Gunicorn + eventlet, single worker)
-- **MediaMTX v1.16.1** — Multi-protocol streaming engine
+- **MediaMTX v1.19.2** — Multi-protocol streaming engine; `rtspDemuxMpegts: yes` is set under `pathDefaults` so MPEG-TS-over-RTSP publishes from UAS/drone tools are unwrapped into elementary tracks (H.264/H.265/AAC/KLV) before routing — external clients like CloudTAK get native tracks instead of an opaque MPEG-TS blob
 - **FFmpeg** — Video processing, recording, and transcoding
 - **Flask-Login** — Session-based authentication
 - **Flask-Limiter** — Rate limiting (5/min on login)
@@ -817,11 +816,7 @@ docker inspect --format='{{.State.Health.Status}}' tak-video-restreamer
 ## GPU Encoding (Optional)
 
 ### Overview
-GPU encoding provides 3-5x faster transcoding performance using NVIDIA's NVENC hardware encoder. This is especially beneficial for:
-- High-resolution video (1080p, 4K)
-- Batch transcoding operations
-- Real-time processing workflows
-- Reducing server CPU load
+NVIDIA NVENC is available as an optional drop-in replacement for CPU-based libx264. It handles the same workloads faster and at lower CPU cost — useful when transcoding several streams simultaneously or running on hardware where CPU headroom is limited. Quality at similar settings is comparable to software encoding.
 
 ### System Requirements
 
@@ -1898,7 +1893,7 @@ Content-Type: application/json
 }
 ```
 
-Requires certbot installed in the container (included in Docker image) and port 80 accessible.
+Requires certbot installed in the container (included in Docker image) and **port 80 exposed and publicly reachable**. The endpoint runs `certbot --standalone` which binds port 80 inside the container to complete the ACME HTTP-01 challenge. Add `- "80:80"` to the `ports:` section in `docker-compose.yml` before calling this endpoint, then remove it afterwards.
 
 #### Renew Let's Encrypt Certificate
 ```http
@@ -2430,7 +2425,7 @@ openssl req -x509 -newkey rsa:4096 -keyout server.key \
 ```
 
 **⚠️ Security Warning:**
-Self-signed certificates will trigger security warnings in RTSP clients and browsers. For production deployments, always use certificates from a trusted Certificate Authority.
+Self-signed certificates will trigger security warnings in RTSP clients and browsers. Certificates are generated with a Subject Alternative Name (SAN) matching the common name you provide — this is required by Chrome and modern ATAK builds, which reject certs that only have a CN. For production deployments, use a certificate from a trusted Certificate Authority.
 
 ### Let's Encrypt Certificates (Recommended for Production)
 
@@ -2438,9 +2433,8 @@ Let's Encrypt provides free, automated, and trusted SSL/TLS certificates. This i
 
 **Requirements:**
 - A public domain name (e.g., `media.example.com`)
-- Port 80 accessible from the internet (for HTTP-01 challenge)
-- OR Port 443 accessible (for TLS-ALPN-01 challenge)
-- OR DNS API access (for DNS-01 challenge)
+- Port 80 accessible from the internet (for HTTP-01 challenge) — this means adding `- "80:80"` to `docker-compose.yml` and opening port 80 at your firewall
+- OR DNS API access (for DNS-01 challenge — works behind NAT, no port 80 needed)
 
 **Quick Setup (Automated Script):**
 
@@ -2842,7 +2836,6 @@ services:
 ├── Dockerfile             # Production container image (with certbot, HEALTHCHECK)
 ├── docker-compose.yml     # Container orchestration config
 ├── mediaMTX.yml          # MediaMTX streaming server config
-├── SECURITY-DEPLOYMENT-GUIDE.md  # Security hardening guide
 ├── app/                  # Modular Flask application
 │   ├── __init__.py       # App factory, blueprint registration, auth middleware
 │   ├── config.py         # Configuration management & settings schema

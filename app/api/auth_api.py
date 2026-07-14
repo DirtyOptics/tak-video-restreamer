@@ -126,5 +126,5 @@ def delete_api_key(key_hash):
 @auth_required
 def get_audit_log():
     """Return recent audit log entries."""
-    lines = int(request.args.get('lines', 200))
+    lines = min(int(request.args.get('lines', 200)), 1000)
     return jsonify({'entries': read_audit_log(lines)})

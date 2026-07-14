@@ -87,6 +87,10 @@ pathDefaults:
   overridePublisher: yes
   srtPublishPassphrase: ""
   srtReadPassphrase: ""
+  # Unwrap MPEG-TS over RTSP into elementary tracks (H.264/H.265/AAC/KLV).
+  # Required for UAS/drone feeds that publish MP2T payloads so that
+  # external consumers (e.g. CloudTAK) can play back individual video tracks.
+  rtspDemuxMpegts: yes
 
 ###############################################
 # Paths configuration

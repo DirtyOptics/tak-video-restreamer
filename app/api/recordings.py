@@ -73,7 +73,7 @@ def sanitize_metadata(value: str) -> str:
     if not value:
         return ""
     # Remove potentially dangerous characters for FFmpeg metadata
-    sanitized = re.sub(r'[;\'"\\`$]', '', str(value))
+    sanitized = re.sub(r'[;\'"\\`$\n\r\t]', '', str(value))
     return sanitized[:256]  # Limit length
 
 
@@ -162,7 +162,7 @@ def start_recording(stream_name):
         timecode_metadata = f'{hours:02d}:{minutes:02d}:{seconds:02d}.{now.microsecond // 1000:03d}'
         
         # Build FFmpeg arguments
-        ffmpeg_args = ['ffmpeg']
+        ffmpeg_args = ['ffmpeg', '-loglevel', 'warning']  # suppress frame= progress lines
         
         # Add protocol-specific input options
         ffmpeg_args.extend(input_options)
@@ -285,8 +285,8 @@ def start_recording(stream_name):
         # Start FFmpeg process
         process = subprocess.Popen(
             ffmpeg_args,
-            stdin=subprocess.PIPE,  # Allow sending 'q' for graceful shutdown
-            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,   # Allow sending 'q' for graceful shutdown
+            stdout=subprocess.DEVNULL,  # Not read; PIPE without a reader deadlocks when OS pipe buffer fills
             stderr=subprocess.PIPE
         )
         

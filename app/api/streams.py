@@ -501,7 +501,7 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
     transport = server_settings.get('rtsp_transport', 'tcp')
     timeout_us = server_settings.get('connection_timeout', 5000000)
     is_rtsp = source_url.lower().startswith(('rtsp://', 'rtsps://'))
-    args = ['ffmpeg']
+    args = ['ffmpeg', '-loglevel', 'warning']  # suppress frame= progress lines
     if is_rtsp:
         args.extend([
             '-rtsp_transport', transport,
@@ -544,11 +544,12 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
 
 def _finalize_recording_for_reconnect(stream_name: str):
     """Gracefully stop an active recording before a pull stream reconnect."""
-    if stream_name not in active_recordings:
+    with recording_lock:
+        recording_info = active_recordings.get(stream_name)
+    if recording_info is None:
         return
     logger.info(f"Finalizing recording for {stream_name} before reconnection")
     try:
-        recording_info = active_recordings[stream_name]
         recording_process = recording_info.get('process')
         if recording_process and recording_process.poll() is None:
             recording_process.stdin.write(b'q')
