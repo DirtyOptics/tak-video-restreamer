@@ -416,14 +416,22 @@ Instead of pushing from the source, the server can pull from an external RTSP/SR
 
 1. Go to the **Web UI** → click a stream → **Pull Stream**
 2. Enter the source URL: `rtsp://192.168.1.100:554/stream`
-3. Optionally provide credentials
+3. If the camera requires authentication, either:
+   - Embed credentials directly in the URL: `rtsp://user:password@192.168.1.100:554/stream`
+   - Or tick **Use Credentials** and enter the username and password in the fields below the URL
 4. The server connects, pulls the feed, and re-publishes it locally with auto-reconnection
 
 Or via API:
 ```bash
+# Without credentials
 curl -u admin:changeme -X POST http://SERVER-IP:3000/api/streams/camera1/pull \
   -H "Content-Type: application/json" \
   -d '{"url": "rtsp://192.168.1.100:554/stream"}'
+
+# With credentials (either format works)
+curl -u admin:changeme -X POST http://SERVER-IP:3000/api/streams/camera1/pull \
+  -H "Content-Type: application/json" \
+  -d '{"url": "rtsp://192.168.1.100:554/stream", "username": "user", "password": "pass"}'
 ```
 
 ### Connecting ATAK UAS Tool

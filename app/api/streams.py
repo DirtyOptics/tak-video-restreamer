@@ -36,6 +36,42 @@ import requests as http_requests
 logger = logging.getLogger(__name__)
 
 streams_bp = Blueprint('streams', __name__)
+
+
+def _redact_url(url: str) -> str:
+    """Return URL with password replaced by *** for safe logging."""
+    try:
+        import urllib.parse
+        p = urllib.parse.urlparse(url)
+        if p.password:
+            netloc = p.hostname
+            if p.port:
+                netloc = f'{netloc}:{p.port}'
+            netloc = f'{p.username}:***@{netloc}'
+            return p._replace(netloc=netloc).geturl()
+    except Exception:
+        pass
+    return url
+
+
+def _inject_credentials(url: str, username: str, password: str) -> str:
+    """Embed username/password into URL if not already present and creds are provided."""
+    if not username and not password:
+        return url
+    try:
+        import urllib.parse
+        p = urllib.parse.urlparse(url)
+        if p.username:  # credentials already in URL — don't overwrite
+            return url
+        netloc = p.hostname
+        if p.port:
+            netloc = f'{netloc}:{p.port}'
+        netloc = f'{urllib.parse.quote(username, safe="")}:{urllib.parse.quote(password, safe="")}@{netloc}'
+        return p._replace(netloc=netloc).geturl()
+    except Exception:
+        return url
+
+
 mediamtx = MediaMTXClient(MEDIAMTX_API_URL)
 
 # Track last time bytes were received per stream (for last_data_time)
@@ -158,8 +194,10 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
     Called both from the API endpoint and from the startup restore path.
     Raises on error.
     """
-    ffmpeg_args = _build_pull_ffmpeg_args(source_url, stream_name)
-    logger.info(f"Starting pull stream: {stream_name} from {source_url}")
+    # Embed username/password into URL when supplied as separate fields
+    ffmpeg_url = _inject_credentials(source_url, username, password)
+    ffmpeg_args = _build_pull_ffmpeg_args(ffmpeg_url, stream_name)
+    logger.info(f"Starting pull stream: {stream_name} from {_redact_url(ffmpeg_url)}")
 
     process = subprocess.Popen(
         ffmpeg_args,
