@@ -70,12 +70,12 @@ To report a security vulnerability, please open a private security advisory on G
 
 ### KLV Metadata Processing (MISB ST 0601.19)
 - **Complete STANAG 4609 compliance** - All 89 tags supported
-- Extract KLV from MOV/MP4/TS files (bypasses FFmpeg for multi-packet extraction)
-- Dual output modes: Decoded values or decoded + raw hex
+- Read KLV from MOV/MP4/TS files or raw `.klv.bin` dumps (`utils/read_klv.py`)
+- KLV data tracks carried end-to-end on ingest — see [KLV transport constraints](#klv-transport-constraints)
+- **Automatic KLV timestamp repair** for UAS feeds that stamp metadata with B-frame timestamps
+- **Preflight validation** of KLV integrity and TAK client compatibility, via CLI, REST API, and the web UI
 - Direct binary parser with BER length encoding support
 - NaN/Infinity sanitization for valid JSON output
-- Auto-cleanup of intermediate files
-- Web UI and REST API for extraction
 
 ### Recording with Re-encoding
 - Auto-detects H.264/H.265 codecs
@@ -94,8 +94,8 @@ To report a security vulnerability, please open a private security advisory on G
 
 ### Video Transcoding
 - Timecode correction to match button press time
-- Multiple output formats: MOV, MP4, MXF, MPEG-TS
-- **STANAG 4609 KLV metadata embedding** (MPEG-TS)
+- Output formats: MOV, MP4, MXF
+- STANAG 4609 KLV written as a `.klv.bin` sidecar (MP4/MXF options)
 - RESTful APIs for transcoding operations
 - **GPU-accelerated encoding** (optional, NVIDIA NVENC)
 - Background processing with WebSocket status updates
@@ -909,9 +909,12 @@ docker logs tak-video-restreamer | grep "GPU Encoding"
 ### Transcoding Options (All Support GPU)
 
 1. **MOV with corrected timecode** - H.264 encoding
-2. **MP4 + KLV backup** - H.264 encoding with metadata
-3. **MXF + KLV backup** - MPEG-2 encoding (CPU only, no NVENC support)
-4. **MPEG-TS with embedded KLV** - H.264 encoding (RECOMMENDED)
+2. **MP4 + KLV backup** - H.264 encoding, KLV written to a separate `.klv.bin` sidecar
+3. **MXF + KLV backup** - MPEG-2 encoding (CPU only, no NVENC support), KLV sidecar
+
+None of these embed KLV into the container. To produce a stream with a real embedded
+KLV data track, mux MPEG-TS with FFmpeg and keep the data stream with `-map 0` — see
+[KLV transport constraints](#klv-transport-constraints).
 
 ### Troubleshooting
 
@@ -986,7 +989,7 @@ data/streams/
 ├── drone1/
 │   ├── recording-2026-01-22T10-30-00-000Z.mov
 │   ├── recording-2026-01-22T11-00-00-000Z.mov
-│   └── recording-2026-01-22T11-30-00-000Z_extracted_klv.json
+│   └── recording-2026-01-22T11-30-00-000Z_transcoded.klv.bin
 ├── drone2/
 │   └── recording-2026-01-22T10-00-00-000Z.mov
 └── camera1/
@@ -1359,10 +1362,11 @@ GET /api/transcode/options
 ```
 
 Returns available transcode options:
-- Option 1: MOV with corrected timecode (no KLV)
+- Option 1: MOV with corrected timecode (no KLV) — the default
 - Option 2: MP4 + KLV backup file
 - Option 3: MXF + KLV backup (broadcast standard)
-- Option 4: **MPEG-TS with embedded KLV (recommended)**
+
+The web UI builds its option list from this endpoint, so the two can never drift apart.
 
 #### Start Transcode
 ```http
@@ -1371,7 +1375,7 @@ Content-Type: application/json
 
 {
   "inputFile": "/opt/app/streams/drone1/recording.mov",
-  "option": 4,  // 1-4, default is 4 (MPEG-TS with embedded KLV)
+  "option": 1,  // 1-3, default is 1 (MOV with corrected timecode)
   "streamName": "drone1"  // Optional
 }
 ```
@@ -1489,89 +1493,133 @@ Get status of all transcode jobs.
 }
 ```
 
-### KLV Metadata APIs
+### KLV Transport Constraints
 
-#### Extract KLV from Video
+Two things silently strip or corrupt KLV. Both cost real debugging time, so they are
+worth knowing before you wire up a source.
+
+**1. KLV cannot be published over RTSP.** FFmpeg's RTP muxer has no SMPTE336M
+payloader — mapping a KLV track into `-f rtsp` fails outright:
+
+```
+[rtp @ ...] Unsupported codec klv
+```
+
+Worse, FFmpeg's default stream selection never picks data streams, so a plain
+`-c copy -f rtsp` publish *succeeds* and quietly drops the KLV. MediaMTX then reports
+`tracks: ["H264"]` and there is nothing downstream to display. **Publish over SRT, and
+always pass `-map 0`:**
+
+```bash
+ffmpeg -re -i input.ts -map 0 -c copy -f mpegts \
+  "srt://localhost:8890?streamid=publish:drone1"
+```
+
+MediaMTX's RTSP *output* handles KLV correctly — it advertises the track as
+`a=rtpmap:96 SMPTE336M/90000` (RFC 6597). The limitation is only on the publish side.
+
+**2. Some UAS muxers stamp KLV with the video's B-frame timestamps.** The KLV PTS then
+runs backwards across every reordered GOP. MPEG-TS tolerates this because DTS stays
+monotonic, but RTP carries only one timestamp, so clients reading from MediaMTX's RTSP
+output drop the packets with `non monotonically increasing dts`. TVR repairs this
+automatically on pull streams via the `repair_klv_timestamps` setting (default on). To
+fix a file offline, without re-encoding video:
+
+```bash
+ffmpeg -i broken.ts -map 0 -c copy -bsf:d "setts=pts=DTS:dts=DTS" -f mpegts fixed.ts
+```
+
+**TAK client playback.** WinTAK (PGSCMedia) is stricter than FFmpeg or VLC and fails
+with an opaque `Media Fatal Error` on variable frame rate, High profile, or B-frames.
+For a stream WinTAK reliably decodes:
+
+```bash
+-c:v libx264 -profile:v main -bf 0 -r 30 -fps_mode:v cfr -pix_fmt yuv420p
+```
+
+To check a source against all of the above, use the validator below.
+
+### Stream Validation
+
+`utils/validate_stream.py` checks a file or a live stream for KLV integrity and TAK
+client compatibility, and reports what to do about each problem it finds.
+
+```bash
+python utils/validate_stream.py /opt/app/streams/drone1/recording.ts
+python utils/validate_stream.py rtsp://localhost:8554/drone1
+python utils/validate_stream.py recording.ts --json --window 15
+```
+
+Checks performed:
+
+| Check | Fails when |
+|---|---|
+| KLV track present | No data track — usually means it was published over RTSP |
+| KLV timestamps monotonic | PTS runs backwards (breaks at the RTP hop) |
+| Constant frame rate | Frame intervals vary (a known WinTAK failure) |
+| TAK-safe video profile | High profile or B-frames present |
+| KLV PES `stream_id` | Not `0xBD`; advisory only, FFmpeg always writes `0xFC` |
+| ST 0601 decodes | Payload is not a parseable UAS Local Set |
+
+Exit code is `0` when all checks pass, `1` when any check fails, `2` if the target
+could not be read.
+
+#### Validate a Stream or Recording
 ```http
-POST /api/klv/extract
+POST /api/stream/validate
 Content-Type: application/json
 
 {
-  "videoFile": "drone1/recording-2025-12-09T20-52-15-545Z.mov",
-  "includeRaw": false  // Optional: include raw hex values alongside decoded
+  "streamName": "drone1"
 }
 ```
 
-**Parameters:**
-- `videoFile` (required): Relative path from streams directory (e.g., "drone1/recording.mov")
-- `includeRaw` (optional, default=false): Include raw hex values in output
+Or against a recording, relative to `STREAMS_DIR`:
 
-**Supported Formats:** MOV, MP4, TS, MXF
+```json
+{
+  "videoFile": "drone1/recording.ts",
+  "window": 10
+}
+```
 
-**Response (includeRaw=false):**
+Provide exactly one of `streamName` or `videoFile`. `window` is the number of seconds
+to sample (1–60, default 10).
+
+Response:
 ```json
 {
   "success": true,
-  "message": "KLV extraction completed",
-  "total_packets": 287,
-  "json_file": "drone1/recording-2025-12-09T20-52-15-545Z_extracted_klv.json"
-}
-```
-
-**Response (includeRaw=true):**
-```json
-{
-  "success": true,
-  "message": "KLV extraction completed",
-  "total_packets": 287,
-  "json_file": "drone1/recording-2025-12-09T20-52-15-545Z_extracted_klv_raw.json"
-}
-```
-
-**JSON Output Format (Decoded Only):**
-```json
-{
-  "extraction_info": {
-    "total_packets": 287,
-    "extraction_time": "2025-12-09T21:12:14.168492Z",
-    "format": "STANAG 4609 UAS Datalink Local Set"
-  },
-  "packets": [
-    {
-      "packet_number": 0,
-      "timestamp": "2025-12-09T20:52:18.707664+00:00",
-      "raw_size": 103,
-      "metadata": {
-        "UNIX Time Stamp": 1733779938.707664,
-        "Platform Heading Angle": 143.29,
-        "Platform Pitch Angle": -0.31,
-        "Platform Roll Angle": 1.73,
-        "Sensor Latitude": 38.707044,
-        "Sensor Longitude": -121.292011,
-        "Sensor True Altitude": 68.59,
-        "Sensor Horizontal Field of View": 58.88,
-        "Sensor Vertical Field of View": 42.96,
-        "UAS Datalink LS Version Number": 16
+  "report": {
+    "target": "drone1/recording.ts",
+    "ok": false,
+    "has_warnings": true,
+    "checks": [
+      {
+        "id": "klv_timestamps",
+        "name": "KLV timestamps monotonic",
+        "status": "fail",
+        "summary": "KLV PTS runs backwards on 75/217 steps (34.6%).",
+        "hint": "Repair with: -c:d copy -bsf:d \"setts=pts=DTS:dts=DTS\"",
+        "detail": { "backward_steps": 75, "backward_pct": 34.6 }
       }
-    }
-  ]
-}
-```
-
-**JSON Output Format (With Raw Hex):**
-```json
-{
-  "metadata": {
-    "Platform Heading Angle": {
-      "decoded": 143.29,
-      "raw_hex": "644c"
-    },
-    "Sensor Latitude": {
-      "decoded": 38.707044,
-      "raw_hex": "1f8b0000"
-    }
+    ]
   }
 }
+```
+
+Each check carries a `status` of `pass`, `warn`, `fail`, or `skip`. The web UI surfaces
+failing and warning checks as a banner on the stream card (**🔎 Check KLV** on any live
+stream).
+
+### KLV Parsing Support
+
+`shared/klv.py` decodes the MISB ST 0601.19 UAS Datalink Local Set. Reading KLV out of
+a file or a binary dump is also available as a CLI:
+
+```bash
+python utils/read_klv.py recording.ts
+python utils/read_klv.py metadata.klv.bin --json out.json
 ```
 
 **MISB ST 0601.19 Tags Supported (All 89):**
@@ -1589,20 +1637,6 @@ Content-Type: application/json
 - Tag 79-80: Platform/Gimbal Velocities (±327 m/s)
 - Tag 82-89: Full Precision Corners (8-byte double)
 - Plus 60+ additional tags (strings, flags, angles, positions)
-
-#### Read KLV Metadata
-```http
-POST /api/klv/read
-Content-Type: application/json
-
-{
-  "file": "/opt/app/streams/drone1/recording.ts"
-}
-```
-
-Accepts either video files (.ts, .mp4, .mov) or binary KLV files (.klv.bin).
-
-Response: Same format as `/api/klv/extract` with full metadata analysis.
 
 ### Test Pattern Generator APIs
 
@@ -2095,6 +2129,7 @@ Get all system settings including disk space and configuration.
     "max_backoff_delay": 60,
     "connection_timeout": 5000000,
     "enable_ffmpeg_reconnect": true,
+    "repair_klv_timestamps": true,
     "rtsp_transport": "tcp",
     "srt_buffer_enabled": true,
     "srt_max_buffer_seconds": 30,
@@ -2875,6 +2910,7 @@ services:
 │   └── srt_buffer.py    # SRT stream buffering
 ├── utils/               # Standalone utilities
 │   ├── read_klv.py           # KLV reading utility
+│   ├── validate_stream.py    # KLV / TAK-compatibility preflight validator
 │   └── transcode_video.py    # Video transcoding script
 ├── scripts/             # Automation scripts
 │   └── setup-letsencrypt.sh  # Let's Encrypt setup helper

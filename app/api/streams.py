@@ -571,6 +571,17 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
         '-fflags', '+genpts+discardcorrupt+nobuffer',
         '-flags', 'low_delay',
         '-c', 'copy',
+    ])
+    # Force PTS=DTS on data (KLV) tracks. Some UAS muxers stamp KLV packets with
+    # the accompanying video frame's B-frame timestamps, so the KLV PTS runs
+    # backwards across a reordered GOP. MPEG-TS tolerates that because DTS stays
+    # monotonic, but RTP carries only one timestamp — so readers downstream of
+    # MediaMTX's RTSP output drop those packets as non-monotonic. This is a no-op
+    # on streams whose KLV timestamps are already well-formed, and ffmpeg ignores
+    # -bsf:d when the input has no data track.
+    if server_settings.get('repair_klv_timestamps', True):
+        args.extend(['-bsf:d', 'setts=pts=DTS:dts=DTS'])
+    args.extend([
         # Republish over SRT/MPEG-TS rather than RTSP/RTP so KLV data tracks
         # (and any other non-AV streams) are carried losslessly. RTP cannot
         # carry KLV, which is a core TAK requirement.

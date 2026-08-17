@@ -6,10 +6,15 @@ This material is based upon work supported by the United States Air Force under 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 This is distributed in the hope that it will be useful, but without any warranty, without even the implied warranty of merchantability or fitness for a particular purpose.  See the GNU General Public License for more details. https://www.gnu.org/licenses/
 
-Transcode Video - Correct timecode and optionally embed KLV metadata
+Transcode Video - Correct timecode and optionally generate KLV metadata
 - Corrects timecode to match button press time
 - Option 1: MOV with corrected timecode (no KLV)
-- Option 2: MP4 with embedded KLV data stream (STANAG 4609)
+- Option 2: MP4 + separate STANAG 4609 KLV binary file
+- Option 3: MXF (broadcast) + separate STANAG 4609 KLV binary file
+
+Note: none of these embed KLV into the container. To produce a stream with a
+real embedded KLV data track, mux MPEG-TS with FFmpeg directly and keep the
+data stream with `-map 0`; see utils/validate_stream.py to check the result.
 
 GPU Encoding:
 - Set ENABLE_GPU_ENCODING=1 environment variable to enable
@@ -381,7 +386,7 @@ def transcode_option_2(input_file, output_file, creation_time, corrected_tc, off
         print(f"✓ KLV backup file: {Path(klv_bin_file).name}")
         print(f"\nNote: KLV stored in separate .klv.bin file (MP4 standard limitation)")
         print(f"For true embedded KLV, use MXF container or MPEG-TS format")
-        print(f"Use extract_video_klv.py to read KLV from backup file")
+        print(f"Use read_klv.py to read KLV from backup file")
     
     return result
 
@@ -462,112 +467,6 @@ def transcode_option_3(input_file, output_file, creation_time, corrected_tc, off
         print(f"Note: KLV in separate file - use professional muxers for full MXF+KLV integration")
     
     return result
-
-
-def transcode_option_4(input_file, output_file, creation_time, corrected_tc, offset, timecode_start, duration, button_press_dt, existing_keywords=''):
-    """
-    Option 4: MOV → MPEG-TS with TRUE embedded KLV
-    Creates transport stream with KLV as data stream (STANAG 4609 compliant)
-    This is the industry standard for UAS metadata embedding
-    """
-    print("\n" + "="*70)
-    print("Option 4: MPEG-TS with Embedded KLV (RECOMMENDED)")
-    print("="*70)
-    
-    if existing_keywords:
-        print(f"Preserving keywords: {existing_keywords}")
-    
-    # Generate KLV packets
-    klv_packets = generate_klv_packets(button_press_dt, duration, klv_rate=2.0)
-    
-    if not klv_packets:
-        print("Error: Failed to generate KLV packets")
-        return False
-    
-    # Create temporary KLV binary file
-    base, _ = os.path.splitext(output_file)
-    klv_bin_file = f"{base}_klv.bin"
-    
-    try:
-        with open(klv_bin_file, 'wb') as f:
-            for packet in klv_packets:
-                f.write(packet)
-        print(f"✓ Generated {len(klv_packets)} KLV packets ({os.path.getsize(klv_bin_file)} bytes)")
-    except Exception as e:
-        print(f"Error preparing KLV data: {e}")
-        return False
-    
-    # First, create MP4 with corrected timecode
-    print(f"\nStep 1/2: Creating MP4 with corrected timecode...")
-    temp_mp4 = f"{base}_temp.mp4"
-    
-    # Get encoder parameters (GPU or CPU)
-    encoder, encoder_params = get_video_encoder_params('h264')
-    encoding_method = "GPU (NVENC)" if ENABLE_GPU_ENCODING else f"CPU ({multiprocessing.cpu_count()-1} threads)"
-    print(f"Encoding method: {encoding_method}")
-    
-    ffmpeg_cmd = [
-        'ffmpeg',
-        '-i', input_file,
-        '-c:v', encoder,
-        *encoder_params,
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-metadata', f'title=Transcoded Recording with Embedded KLV',
-        '-metadata', f'creation_time={creation_time}',
-        '-metadata', f'description={existing_keywords}',
-        '-metadata', f'keywords={existing_keywords}',
-        '-metadata', f'comment=Timecode: {corrected_tc}, Offset: {offset:.2f}s, Original: {timecode_start}' + (f' | Keywords: {existing_keywords}' if existing_keywords else ''),
-        '-progress', 'pipe:1',
-        '-y',
-        temp_mp4
-    ]
-    
-    result = run_ffmpeg(ffmpeg_cmd, duration)
-    
-    if not result:
-        print("\n✗ Failed to create intermediate MP4")
-        return False
-    
-    # Step 2: Embed KLV using embed_klv_in_ts.py
-    print(f"\nStep 2/2: Embedding KLV into MPEG-TS...")
-    
-    try:
-        embed_script = os.path.join(os.path.dirname(__file__), 'embed_klv_in_ts.py')
-        result = subprocess.run(
-            ['python3', embed_script, temp_mp4, klv_bin_file, output_file],
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
-        
-        if result.returncode == 0:
-            # Clean up temporary files
-            try:
-                os.remove(temp_mp4)
-                os.remove(klv_bin_file)
-            except:
-                pass
-            
-            print(f"\n✓ MPEG-TS file: {Path(output_file).name}")
-            print(f"\nFormat: MPEG-TS (Transport Stream)")
-            print(f"KLV Status: TRULY EMBEDDED as data stream")
-            print(f"Standard: STANAG 4609 UAS Datalink Local Set")
-            print(f"Update rate: 2Hz ({len(klv_packets)} packets)")
-            print(f"\nVerify KLV stream:")
-            print(f"  ffprobe -show_streams {Path(output_file).name} | grep codec_type=data")
-            return True
-        else:
-            print(f"\n✗ Failed to embed KLV")
-            print(result.stderr)
-            return False
-            
-    except subprocess.TimeoutExpired:
-        print("\n✗ KLV embedding timeout")
-        return False
-    except Exception as e:
-        print(f"\n✗ Error embedding KLV: {e}")
-        return False
 
 
 def run_ffmpeg(ffmpeg_cmd, duration):
@@ -714,33 +613,25 @@ def transcode_video(input_file):
         print("   - Output: MXF (SMPTE 377M) + .klv.bin file")
         print("   Note: Industry standard format, better codec quality than MP4")
         
-        print("\n4) MOV → MPEG-TS with EMBEDDED KLV (RECOMMENDED) ★")
-        print("   - Corrects timecode to button press time")
-        print("   - TRUE embedded KLV in video container")
-        print("   - STANAG 4609 compliant transport stream")
-        print("   - Output: Single .ts file with KLV data stream")
-        print("   Note: Industry standard for UAS metadata, KLV truly embedded")
-
     else:
         print("\n2) [UNAVAILABLE] - KLV module not found")
         print("\n3) [UNAVAILABLE] - KLV module not found")
-        print("\n4) [UNAVAILABLE] - KLV module not found")
-    
-    print("\n5) Cancel")
+
+    print("\n4) Cancel")
     print("="*70)
-    
+
     # Get user choice
     while True:
         try:
-            choice = input("\nSelect option (1-5): ").strip()
-            if choice in ['1', '2', '3', '4', '5']:
+            choice = input("\nSelect option (1-4): ").strip()
+            if choice in ['1', '2', '3', '4']:
                 break
-            print("Invalid choice. Please enter 1, 2, 3, 4, or 5.")
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
         except (EOFError, KeyboardInterrupt):
             print("\n\nCancelled by user")
             return False
-    
-    if choice == '5':
+
+    if choice == '4':
         print("\nCancelled by user")
         return False
     
@@ -762,7 +653,7 @@ def transcode_video(input_file):
             input_file, output_file, creation_time,
             corrected_tc, offset, timecode_start, duration, button_press_dt, existing_keywords
         )
-    elif choice == '3':
+    else:  # choice == '3'
         if not KLV_AVAILABLE:
             print("\nError: KLV module not available")
             return False
@@ -771,16 +662,7 @@ def transcode_video(input_file):
             input_file, output_file, creation_time,
             corrected_tc, offset, timecode_start, duration, button_press_dt, existing_keywords
         )
-    else:  # choice == '4'
-        if not KLV_AVAILABLE:
-            print("\nError: KLV module not available")
-            return False
-        output_file = f"{base}_transcoded.ts"
-        success = transcode_option_4(
-            input_file, output_file, creation_time,
-            corrected_tc, offset, timecode_start, duration, button_press_dt, existing_keywords
-        )
-    
+
     if success:
         print(f"\nOutput: {output_file}")
         print(f"\nCompleted successfully!")

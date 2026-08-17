@@ -1944,3 +1944,71 @@ header h1 {
         margin-top: 2rem;
     }
 }
+
+/* ==========================================================================
+   Stream validation banner (/api/stream/validate)
+   Surfaces KLV + TAK-client compatibility problems on the stream card.
+   Declared last so it wins over `.stream-item * { color: inherit }` on
+   equal specificity.
+   ========================================================================== */
+
+.stream-validation {
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    border-left: 3px solid var(--border-color);
+    background: var(--secondary-bg);
+    font-size: 0.875rem;
+}
+
+.stream-validation.ok {
+    border-left-color: var(--accent-success);
+    color: var(--accent-success);
+}
+
+.stream-validation.warn {
+    border-left-color: var(--accent-warning);
+}
+
+.stream-validation.fail {
+    border-left-color: var(--accent-danger);
+}
+
+.stream-validation-title {
+    font-weight: 600;
+    margin-bottom: var(--spacing-xs);
+}
+
+.stream-validation.warn .stream-validation-title {
+    color: var(--accent-warning);
+}
+
+.stream-validation.fail .stream-validation-title {
+    color: var(--accent-danger);
+}
+
+.stream-validation-list {
+    margin: 0;
+    padding-left: var(--spacing-lg);
+    list-style: disc;
+}
+
+.stream-validation-list li {
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.stream-validation-list li.validation-fail strong {
+    color: var(--accent-danger);
+}
+
+.stream-validation-list li.validation-warn strong {
+    color: var(--accent-warning);
+}
+
+.stream-validation .validation-hint {
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    margin-top: 2px;
+    line-height: 1.4;
+}

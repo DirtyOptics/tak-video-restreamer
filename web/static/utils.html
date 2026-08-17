@@ -10,7 +10,7 @@ This is distributed in the hope that it will be useful, but without any warranty
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Utils - Video Transcoding & KLV</title>
+    <title>Utils - Video Transcoding</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -53,15 +53,12 @@ This is distributed in the hope that it will be useful, but without any warranty
             <section class="card">
                 <h2>Video Utilities</h2>
                 <p style="color: #888; margin-bottom: 1.5rem;">
-                    Transcode recordings with timecode correction and KLV metadata embedding
+                    Transcode recordings with timecode correction and optional STANAG 4609 KLV sidecar files
                 </p>
 
                 <div class="tab-buttons">
                     <button class="tab-button active" onclick="switchTab('transcode', this)">
                         Transcode Video
-                    </button>
-                    <button class="tab-button" onclick="switchTab('klv', this)">
-                        Extract KLV
                     </button>
                     <button class="tab-button" onclick="switchTab('jobs', this)">
                         Jobs
@@ -87,64 +84,17 @@ This is distributed in the hope that it will be useful, but without any warranty
                         <div>
                             <div class="form-group">
                                 <label>Transcode Option</label>
+                                <!-- Populated from GET /api/transcode/options so the values
+                                     can never drift out of sync with the backend. -->
                                 <select id="transcode-option">
-                                    <option value="1">Option 1: MOV with corrected timecode (no KLV)</option>
-                                    <option value="2" selected>Option 2: MPEG-TS with embedded KLV (RECOMMENDED)</option>
+                                    <option value="">Loading options...</option>
                                 </select>
-                                <div id="option-info" class="option-info recommended">
-                                    <strong>MPEG-TS with embedded KLV (RECOMMENDED)</strong><br>
-                                    • Embedded KLV in video container<br>
-                                    • STANAG 4609 compliant transport stream<br>
-                                    • Industry standard for UAS metadata<br>
-                                    • Single .ts file with KLV data stream
-                                </div>
+                                <div id="option-info" class="option-info"></div>
                             </div>
                             
                             <button id="start-transcode-btn" class="btn btn-primary" style="width: 100%;">
                                 Start Transcode
                             </button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- KLV Extract Tab -->
-                <div id="klv-tab" class="tab-content">
-                    <div class="utils-grid">
-                        <div>
-                            <div class="form-group">
-                                <label>Select Video File</label>
-                                <div id="klv-recordings-list" class="recordings-list">
-                                    <div class="empty-state">Loading recordings...</div>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Or Enter File Path</label>
-                                <input type="text" id="klv-input-file" placeholder="drone1/recording.ts">
-                            </div>
-                            <div class="form-group">
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                                    <input type="checkbox" id="klv-include-raw" style="margin: 0;">
-                                    <span>Include Raw Hex Values</span>
-                                </label>
-                                <small style="margin-top: 0.25rem; display: block; color: var(--text-muted);">
-                                    Export both decoded values and original raw hex data
-                                </small>
-                            </div>
-                        </div>
-
-                        <div>
-                            <button id="extract-klv-btn" class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;">
-                                Extract KLV Metadata
-                            </button>
-                            
-                            <div id="klv-result" style="display: none;">
-                                <div class="option-info">
-                                    <div id="klv-summary"></div>
-                                </div>
-                                <button id="download-klv-json" class="btn btn-secondary" style="width: 100%; margin-top: 1rem;">
-                                    Download JSON
-                                </button>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -171,6 +121,7 @@ This is distributed in the hope that it will be useful, but without any warranty
             socket.on('connect', () => {
                 loadRecordings();
                 loadTranscodeStatus();
+                loadTranscodeOptions();
             });
 
             socket.on('disconnect', () => {
@@ -192,11 +143,17 @@ This is distributed in the hope that it will be useful, but without any warranty
             // Load data immediately without Socket.IO
             loadRecordings();
             loadTranscodeStatus();
+            loadTranscodeOptions();
         }
 
         let recordings = [];
         let transcodeJobs = {};
-        let klvData = null;
+
+        function escapeHtml(value) {
+            const div = document.createElement('div');
+            div.textContent = value == null ? '' : String(value);
+            return div.innerHTML;
+        }
 
         // Tab switching
         function switchTab(tab, element) {
@@ -225,22 +182,18 @@ This is distributed in the hope that it will be useful, but without any warranty
                 recordings = await response.json();
                 
                 renderRecordingsList('recordings-list', false);
-                renderRecordingsList('klv-recordings-list', true);
             } catch (error) {
                 console.error('Error loading recordings:', error);
-                
+
                 // Show error in UI
-                const containers = ['recordings-list', 'klv-recordings-list'];
-                containers.forEach(containerId => {
-                    const container = document.getElementById(containerId);
-                    if (container) {
-                        container.innerHTML = `<div class="empty-state" style="color: #f44336;">Error loading recordings: ${error.message}</div>`;
-                    }
-                });
+                const container = document.getElementById('recordings-list');
+                if (container) {
+                    container.innerHTML = `<div class="empty-state" style="color: #f44336;">Error loading recordings: ${error.message}</div>`;
+                }
             }
         }
 
-        function renderRecordingsList(elementId, klvOnly) {
+        function renderRecordingsList(elementId, mediaOnly) {
             const container = document.getElementById(elementId);
             
             if (!container) {
@@ -254,7 +207,7 @@ This is distributed in the hope that it will be useful, but without any warranty
             }
             
             let filteredRecordings = recordings;
-            if (klvOnly) {
+            if (mediaOnly) {
                 filteredRecordings = recordings.filter(r => {
                     const filename = r.filename.toLowerCase();
                     return filename.endsWith('.ts') || 
@@ -312,34 +265,62 @@ This is distributed in the hope that it will be useful, but without any warranty
                 selectedItem.classList.add('selected');
             }
             
-            if (listId === 'recordings-list') {
-                document.getElementById('input-file').value = path;
-            } else {
-                document.getElementById('klv-input-file').value = path;
-            }
-            
+            document.getElementById('input-file').value = path;
+
             console.log('Selected recording:', path);
         }
 
-        // Update option info
-        document.getElementById('transcode-option')?.addEventListener('change', (e) => {
-            const option = parseInt(e.target.value);
+        // Transcode options, loaded from the backend so the option numbers the UI
+        // submits always match the ones the server dispatches on.
+        let transcodeOptions = [];
+
+        function renderOptionInfo() {
             const infoDiv = document.getElementById('option-info');
-            
-            const infos = {
-                1: {
-                    text: '<strong>MOV with corrected timecode</strong><br>• Corrects timecode to match button press time<br>• No KLV metadata<br>• QuickTime compatible',
-                    recommended: false
-                },
-                2: {
-                    text: '<strong>MPEG-TS with embedded KLV (RECOMMENDED)</strong><br>• TRUE embedded KLV in video container<br>• STANAG 4609 compliant transport stream<br>• Industry standard for UAS metadata<br>• Single .ts file with KLV data stream',
-                    recommended: true
-                }
-            };
-            
-            infoDiv.innerHTML = infos[option].text;
-            infoDiv.className = infos[option].recommended ? 'option-info recommended' : 'option-info';
-        });
+            const value = parseInt(document.getElementById('transcode-option').value);
+            const opt = transcodeOptions.find(o => o.option === value);
+
+            if (!opt) {
+                infoDiv.innerHTML = '';
+                infoDiv.className = 'option-info';
+                return;
+            }
+
+            const klvNote = opt.klvFormat === 'separate_file'
+                ? '<br>• KLV written to a separate .klv.bin file, not embedded'
+                : (opt.klv ? '' : '<br>• No KLV metadata');
+
+            infoDiv.innerHTML = `<strong>${escapeHtml(opt.name)}</strong><br>${escapeHtml(opt.description)}`
+                + `<br>• Output format: ${escapeHtml((opt.format || '').toUpperCase())}${klvNote}`;
+            infoDiv.className = opt.recommended ? 'option-info recommended' : 'option-info';
+        }
+
+        async function loadTranscodeOptions() {
+            const select = document.getElementById('transcode-option');
+            try {
+                const response = await fetch('/api/transcode/options');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const data = await response.json();
+                transcodeOptions = data.options || [];
+
+                select.innerHTML = '';
+                transcodeOptions.forEach(opt => {
+                    const el = document.createElement('option');
+                    el.value = opt.option;
+                    el.textContent = `Option ${opt.option}: ${opt.name}`;
+                    if (opt.option === data.default) el.selected = true;
+                    select.appendChild(el);
+                });
+
+                renderOptionInfo();
+            } catch (error) {
+                console.error('Error loading transcode options:', error);
+                select.innerHTML = '<option value="">Failed to load options</option>';
+                showNotification('Could not load transcode options', 'error');
+            }
+        }
+
+        document.getElementById('transcode-option')?.addEventListener('change', renderOptionInfo);
 
         // Start transcode
         document.getElementById('start-transcode-btn')?.addEventListener('click', async () => {
@@ -387,83 +368,6 @@ This is distributed in the hope that it will be useful, but without any warranty
                 btn.disabled = false;
                 btn.textContent = 'Start Transcode';
             }
-        });
-
-        // Extract KLV
-        document.getElementById('extract-klv-btn')?.addEventListener('click', async () => {
-            const videoFile = document.getElementById('klv-input-file').value.trim();
-            const includeRaw = document.getElementById('klv-include-raw').checked;
-            
-            if (!videoFile) {
-                showNotification('Please select or enter a video file', 'error');
-                return;
-            }
-            
-            const btn = document.getElementById('extract-klv-btn');
-            btn.disabled = true;
-            btn.textContent = 'Extracting...';
-            
-            try {
-                const response = await fetch('/api/klv/extract', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        videoFile,
-                        includeRaw
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    klvData = result.data;
-                    const packets = klvData.packets || [];
-                    const info = klvData.extraction_info || {};
-                    
-                    const cachedNote = result.cached ? ' (cached)' : '';
-                    const rawNote = info.include_raw_values ? ' (with raw hex values)' : '';
-                    
-                    document.getElementById('klv-summary').innerHTML = `
-                        <strong>Extraction Successful${cachedNote}</strong><br>
-                        Format: ${info.format || 'Unknown'}${rawNote}<br>
-                        Total Packets: ${info.total_packets || packets.length}<br>
-                        Extraction Time: ${new Date(info.extraction_time).toLocaleString()}<br>
-                        <br>
-                        <strong>First Packet Preview:</strong><br>
-                        ${packets.length > 0 ? JSON.stringify(packets[0].metadata, null, 2) : 'No packets found'}
-                    `;
-                    
-                    document.getElementById('klv-result').style.display = 'block';
-                    showNotification('KLV extracted successfully!' + cachedNote, 'success');
-                } else {
-                    // Show user-friendly error message without technical details
-                    const errorMsg = result.error || 'Failed to extract KLV metadata';
-                    // Only show basic error, details go to console
-                    if (result.details) {
-                        console.error('KLV extraction details:', result.details);
-                    }
-                    showNotification(errorMsg, 'error');
-                }
-            } catch (error) {
-                console.error('Error extracting KLV:', error);
-                showNotification('Error extracting KLV metadata', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Extract KLV Metadata';
-            }
-        });
-
-        // Download KLV JSON
-        document.getElementById('download-klv-json')?.addEventListener('click', () => {
-            if (!klvData) return;
-            
-            const blob = new Blob([JSON.stringify(klvData, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'klv_metadata.json';
-            a.click();
-            URL.revokeObjectURL(url);
         });
 
         // Load transcode status
@@ -658,6 +562,7 @@ This is distributed in the hope that it will be useful, but without any warranty
 
         // Initial load
         loadRecordings();
+        loadTranscodeOptions();
 
         // Logout
         document.getElementById('logout-link').addEventListener('click', (e) => {
