@@ -25,7 +25,12 @@ def detect_stream_codec(stream_url: str, timeout: int = 5) -> Optional[Dict[str,
         timeout: Probe timeout in seconds
     
     Returns:
-        dict: {codec: 'h264'|'hevc', width: int, height: int, has_audio: bool, has_data: bool, protocol: 'rtsp'|'srt'} or None on failure
+        dict: {codec, width, height, has_audio, has_data, protocol, profile,
+               has_b_frames, avg_frame_rate, data_codec} or None on failure
+
+        profile/has_b_frames/avg_frame_rate describe the video track and are used
+        by utils/validate_stream.py to flag streams that TAK clients reject.
+        data_codec is the codec_name of the first data track ('klv' for STANAG 4609).
     """
     logger.info(f"Detecting codec for stream: {stream_url}")
     
@@ -66,10 +71,14 @@ def detect_stream_codec(stream_url: str, timeout: int = 5) -> Optional[Dict[str,
         height = 0
         has_audio = False
         has_data = False
-        
+        profile = None
+        has_b_frames = None
+        avg_frame_rate = None
+        data_codec = None
+
         for stream in probe_data.get('streams', []):
             codec_type = stream.get('codec_type', '')
-            
+
             if codec_type == 'video' and video_codec == 'unknown':
                 codec_name = stream.get('codec_name', 'unknown')
                 if codec_name in ['h264', 'avc']:
@@ -82,16 +91,25 @@ def detect_stream_codec(stream_url: str, timeout: int = 5) -> Optional[Dict[str,
                     video_codec = codec_name
                 width = stream.get('width', 0)
                 height = stream.get('height', 0)
+                profile = stream.get('profile')
+                has_b_frames = stream.get('has_b_frames')
+                avg_frame_rate = stream.get('avg_frame_rate')
             elif codec_type == 'audio':
                 has_audio = True
             elif codec_type == 'data':
                 has_data = True
+                if data_codec is None:
+                    data_codec = stream.get('codec_name')
                 logger.info(f"Detected data stream (likely KLV metadata): codec={stream.get('codec_name')}")
-        
+
         logger.info(f"Detected: {video_codec} {width}x{height}, audio={has_audio}, data/KLV={has_data}, protocol={protocol}")
-        
+
         return {
             'codec': video_codec,
+            'profile': profile,
+            'has_b_frames': has_b_frames,
+            'avg_frame_rate': avg_frame_rate,
+            'data_codec': data_codec,
             'width': width,
             'height': height,
             'has_audio': has_audio,

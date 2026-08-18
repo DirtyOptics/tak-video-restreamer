@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /opt/app
 
 # Download and install MediaMTX
-RUN MEDIAMTX_VERSION=v1.16.1 && \
+RUN MEDIAMTX_VERSION=v1.19.2 && \
     wget https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz && \
     tar -xzf mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz && \
     rm mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz && \

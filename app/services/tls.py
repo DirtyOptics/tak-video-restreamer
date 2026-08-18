@@ -13,6 +13,7 @@ Handles:
 - Certificate status checking
 - RTSPS + HTTPS configuration
 """
+import ipaddress
 import os
 import json
 import subprocess
@@ -127,6 +128,14 @@ def generate_self_signed(common_name: str = 'localhost', days: int = 3650) -> di
     # Backup existing
     _backup_cert(cert_path, key_path)
 
+    # Include a Subject Alternative Name so modern clients (Chrome, ATAK)
+    # don't reject the cert for missing SAN.
+    try:
+        ipaddress.ip_address(common_name)
+        san = f'IP:{common_name}'
+    except ValueError:
+        san = f'DNS:{common_name}'
+
     result = subprocess.run([
         'openssl', 'req', '-x509',
         '-newkey', 'rsa:4096',
@@ -135,6 +144,7 @@ def generate_self_signed(common_name: str = 'localhost', days: int = 3650) -> di
         '-days', str(days),
         '-nodes',
         '-subj', f'/CN={common_name}',
+        '-addext', f'subjectAltName={san}',
     ], capture_output=True, text=True, timeout=30)
 
     if result.returncode != 0:
@@ -173,6 +183,12 @@ def request_letsencrypt(domain: str, email: str) -> dict:
 
     logger.info(f"Requesting Let's Encrypt certificate for {domain}")
 
+    # --standalone binds port 80 inside the container to serve the ACME
+    # HTTP-01 challenge.  Port 80 must be mapped in docker-compose.yml
+    # (add "- '80:80'" under ports:) and reachable from the internet.
+    # --cert-path / --key-path are not valid certbot certonly options;
+    # certs are always written to /etc/letsencrypt/live/{domain}/ and
+    # copied to CERTS_DIR below.
     result = subprocess.run([
         'certbot', 'certonly',
         '--standalone',
@@ -180,8 +196,6 @@ def request_letsencrypt(domain: str, email: str) -> dict:
         '--agree-tos',
         '--email', email,
         '-d', domain,
-        '--cert-path', os.path.join(CERTS_DIR, 'server.crt'),
-        '--key-path', os.path.join(CERTS_DIR, 'server.key'),
     ], capture_output=True, text=True, timeout=120)
 
     if result.returncode != 0:

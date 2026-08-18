@@ -54,21 +54,12 @@ def get_transcode_options():
             "format": "mxf",
             "klv": True,
             "klvFormat": "separate_file"
-        },
-        {
-            "option": 4,
-            "name": "MPEG-TS with embedded KLV (RECOMMENDED)",
-            "description": "MPEG Transport Stream with H.264 video and STANAG 4609 embedded KLV metadata",
-            "format": "ts",
-            "klv": True,
-            "klvFormat": "embedded",
-            "recommended": True
         }
     ]
-    
+
     return jsonify({
         "options": options,
-        "default": 4
+        "default": 1
     })
 
 
@@ -80,7 +71,7 @@ def start_transcode():
     Request body:
         {
             "inputFile": "/path/to/video.mov",
-            "option": 1-4,
+            "option": 1-3,
             "streamName": "optional"
         }
     """
@@ -88,9 +79,9 @@ def start_transcode():
         data = request.get_json()
         if not data:
             return jsonify({'error': 'Request body required'}), 400
-        
+
         input_file = data.get('inputFile')
-        option = data.get('option', 4)  # Default to MPEG-TS with embedded KLV
+        option = data.get('option', 1)  # Default to MOV with corrected timecode
         stream_name = data.get('streamName', 'transcoded')
         
         if not input_file:
@@ -108,18 +99,18 @@ def start_transcode():
         if not os.path.exists(input_file):
             return jsonify({'error': 'Input file not found'}), 404
         
-        if option not in [1, 2, 3, 4]:
-            return jsonify({'error': 'Invalid option (must be 1-4)'}), 400
-        
-        if option in [2, 3, 4] and not KLV_AVAILABLE:
+        if option not in [1, 2, 3]:
+            return jsonify({'error': 'Invalid option (must be 1-3)'}), 400
+
+        if option in [2, 3] and not KLV_AVAILABLE:
             return jsonify({'error': 'KLV module not available'}), 400
-        
+
         # Generate unique transcode ID
         import random
         transcode_id = f"transcode_{int(time.time())}_{random.randint(1000, 9999)}"
-        
+
         # Determine output file extension based on option
-        output_extensions = {1: '.mov', 2: '.mp4', 3: '.mxf', 4: '.ts'}
+        output_extensions = {1: '.mov', 2: '.mp4', 3: '.mxf'}
         expected_ext = output_extensions.get(option, '.mov')
         base_name = os.path.splitext(input_file)[0]
         expected_output = f"{base_name}_transcoded{expected_ext}"
@@ -423,150 +414,75 @@ def cancel_transcode(transcode_id):
         return jsonify({'error': str(e)}), 500
 
 
-@utils_bp.route('/api/klv/extract', methods=['POST'])
-def extract_klv():
+_VALIDATE_STREAM_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# utils/ holds the standalone CLI tools; put it on the path once so the stream
+# validator can be imported by name from the request handler below.
+_UTILS_DIR = str(Path(__file__).resolve().parent.parent.parent / 'utils')
+if _UTILS_DIR not in sys.path:
+    sys.path.insert(0, _UTILS_DIR)
+
+
+@utils_bp.route('/api/stream/validate', methods=['POST'])
+def validate_stream():
     """
-    Extract KLV metadata from video file
-    
-    Request body:
-        {
-            "videoFile": "stream_name/filename.mov",  // Relative to STREAMS_DIR
-            "includeRaw": false  // Optional: include raw hex values
-        }
+    Preflight-validate a live stream or recording for KLV and TAK-client compatibility.
+
+    Request body (exactly one of):
+        {"streamName": "drone1"}              // validates rtsp://localhost:8554/drone1
+        {"videoFile": "drone1/recording.ts"}  // relative to STREAMS_DIR, or absolute
+
+    Optional:
+        {"window": 10}  // seconds of stream to sample (1-60)
+
+    Response: {"success": true, "report": {...}} where report.checks[] each carry
+    a status of pass/warn/fail/skip plus a remediation hint.
     """
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'Request body required'}), 400
-        
+        data = request.get_json() or {}
+        stream_name = data.get('streamName')
         video_file = data.get('videoFile')
-        include_raw = data.get('includeRaw', False)
-        
-        if not video_file:
-            return jsonify({'error': 'videoFile required'}), 400
-        
-        # Reject absolute paths — only allow paths relative to STREAMS_DIR
-        if os.path.isabs(video_file):
-            return jsonify({'error': 'Absolute paths not allowed. Use a path relative to the streams directory.'}), 400
-        
-        # Block path traversal sequences
-        if '..' in video_file or '\x00' in video_file:
-            return jsonify({'error': 'Invalid file path'}), 400
-        
-        video_file = os.path.join(STREAMS_DIR, video_file)
-        
-        # Verify resolved path is within STREAMS_DIR
-        resolved = Path(video_file).resolve()
-        if not resolved.is_relative_to(Path(STREAMS_DIR).resolve()):
-            return jsonify({'error': 'Access denied'}), 403
-        
-        if not os.path.exists(video_file):
-            return jsonify({'error': 'Video file not found'}), 404
-        
-        # Check file extension
-        video_path = Path(video_file)
-        if video_path.suffix.lower() not in ['.mov', '.mp4', '.ts', '.mkv']:
-            return jsonify({'error': 'Unsupported file format. Supported formats: .mov, .mp4, .ts, .mkv'}), 400
-        
-        # Generate output JSON file path (different names for raw vs decoded)
-        suffix = '_raw' if include_raw else ''
-        json_file = video_path.parent / f"{video_path.stem}_extracted_klv{suffix}.json"
-        
-        # Check if extraction already exists
-        if json_file.exists():
-            logger.info(f"Loading existing KLV extraction: {json_file}")
-            try:
-                import json as json_lib
-                with open(json_file, 'r') as f:
-                    klv_data = json_lib.load(f)
-                
-                # Add total_packets to response if available
-                total_packets = klv_data.get('extraction_info', {}).get('total_packets', 0)
-                
-                return jsonify({
-                    'success': True,
-                    'message': 'Loaded existing KLV extraction',
-                    'data': klv_data,
-                    'cached': True,
-                    'total_packets': total_packets
-                })
-            except Exception as e:
-                logger.warning(f"Failed to load existing extraction, re-extracting: {e}")
-        
-        # Run extraction script
-        logger.info(f"Extracting KLV from: {video_file} (include_raw={include_raw})")
-        
-        # Get path to extraction script (cross-platform)
-        script_dir = Path(__file__).parent.parent.parent / 'utils'
-        extraction_script = script_dir / 'extract_video_klv.py'
-        
-        cmd = [
-            sys.executable,  # Use current Python interpreter
-            str(extraction_script),
-            video_file
-        ]
-        
-        # Add --raw flag if requested
-        if include_raw:
-            cmd.append('--raw')
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120  # 2 minute timeout
-        )
-        
-        # Log both stdout and stderr for debugging
-        if result.stdout:
-            logger.debug(f"KLV extraction stdout: {result.stdout[:1000]}")
-        if result.stderr:
-            logger.debug(f"KLV extraction stderr: {result.stderr[:1000]}")
-        
-        if result.returncode != 0:
-            # Parse output to check if it's just "no KLV found" vs actual error
-            output = result.stderr or result.stdout or ''
-            
-            if 'No KLV metadata found' in output or '✗ No KLV metadata found' in output:
-                logger.info(f"No KLV metadata found in: {video_file}")
-                return jsonify({
-                    'success': False,
-                    'error': 'No KLV metadata found in video file. This file may not contain embedded STANAG 4609 KLV data.',
-                    'details': 'KLV metadata is typically found in MPEG-TS (.ts) files recorded from drone streams. MOV/MP4 files may not contain KLV unless specifically encoded with it.'
-                }), 404
-            
-            error_msg = output
-            logger.error(f"KLV extraction failed (returncode={result.returncode}): {error_msg[:500]}")
-            return jsonify({
-                'success': False,
-                'error': 'KLV extraction failed. The video file may be corrupted or in an unsupported format.'
-            }), 500
-        
-        # Load the extracted JSON
-        if json_file.exists():
-            import json as json_lib
-            with open(json_file, 'r') as f:
-                klv_data = json_lib.load(f)
-            
-            total_packets = klv_data.get('extraction_info', {}).get('total_packets', 0)
-            logger.info(f"KLV extraction successful: {total_packets} packets")
-            
-            return jsonify({
-                'success': True,
-                'message': 'KLV extracted successfully',
-                'data': klv_data,
-                'cached': False,
-                'total_packets': total_packets
-            })
+        window = data.get('window', 10)
+
+        if bool(stream_name) == bool(video_file):
+            return jsonify({'error': 'Provide exactly one of streamName or videoFile'}), 400
+
+        if not isinstance(window, int) or not 1 <= window <= 60:
+            return jsonify({'error': 'window must be an integer between 1 and 60'}), 400
+
+        if stream_name:
+            if len(stream_name) > 64 or not _VALIDATE_STREAM_NAME_RE.match(stream_name):
+                return jsonify({'error': 'Invalid stream name'}), 400
+            target = f'rtsp://localhost:8554/{stream_name}'
         else:
-            return jsonify({
-                'success': False,
-                'error': 'Extraction completed but JSON file not found'
-            }), 500
-        
-    except subprocess.TimeoutExpired:
-        logger.error(f"KLV extraction timeout for: {video_file}")
-        return jsonify({'error': 'KLV extraction timed out. The file may be too large or complex.'}), 500
+            target = video_file
+            # Same containment rules as the transcode endpoint.
+            if not os.path.isabs(target):
+                if '..' in target or '\x00' in target:
+                    return jsonify({'error': 'Invalid file path'}), 400
+                target = os.path.join(STREAMS_DIR, target)
+                resolved = Path(target).resolve()
+                if not resolved.is_relative_to(Path(STREAMS_DIR).resolve()):
+                    return jsonify({'error': 'Access denied'}), 403
+            if not os.path.exists(target):
+                return jsonify({'error': 'Video file not found'}), 404
+
+        # Imported per-request so a missing/broken validator degrades to a 500 on
+        # this endpoint alone rather than breaking app startup. sys.path is set up
+        # once at module import (see _UTILS_DIR above).
+        from validate_stream import validate
+
+        report = validate(target, window=window, timeout=max(30, window * 4))
+
+        # Don't leak absolute server paths back to the browser.
+        if video_file:
+            report['target'] = video_file
+
+        return jsonify({'success': True, 'report': report})
+
+    except ImportError as e:
+        logger.error(f"Stream validator unavailable: {e}")
+        return jsonify({'error': 'Stream validator unavailable'}), 500
     except Exception as e:
-        logger.error(f"Error extracting KLV: {e}")
-        return jsonify({'error': 'An error occurred during KLV extraction.'}), 500
+        logger.error(f"Error validating stream: {e}")
+        return jsonify({'error': 'An error occurred during stream validation.'}), 500

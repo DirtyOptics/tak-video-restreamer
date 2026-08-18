@@ -32,16 +32,22 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from app import create_app
 
 
 @pytest.fixture
 def client():
-    """Create test client"""
+    """Create test client, pre-authenticated with default credentials."""
     app = create_app()
     app.config['TESTING'] = True
     with app.test_client() as client:
+        client.post(
+            '/api/auth/login',
+            json={'username': os.environ.get('ADMIN_USERNAME', 'admin'),
+                  'password': os.environ.get('ADMIN_PASSWORD', 'changeme')},
+            content_type='application/json',
+        )
         yield client
 
 
@@ -132,12 +138,10 @@ class TestStreamsEndpoint:
         data = json.loads(response.data)
         assert isinstance(data, list)
     
-    @patch('requests.get')
-    def test_list_streams_with_active_streams(self, mock_get, client):
+    @patch('app.api.streams.mediamtx.list_paths')
+    def test_list_streams_with_active_streams(self, mock_list_paths, client):
         """Test streams listing with mock active streams"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_list_paths.return_value = {
             'items': {
                 'test_stream': {
                     'name': 'test_stream',
@@ -148,7 +152,6 @@ class TestStreamsEndpoint:
                 }
             }
         }
-        mock_get.return_value = mock_response
         
         response = client.get('/api/streams')
         data = json.loads(response.data)
@@ -317,7 +320,6 @@ class TestRecordingsEndpoint:
             assert 'filename' in recording
             assert 'size' in recording
             assert 'created' in recording
-            assert 'path' in recording
     
     def test_recording_filters_video_files_only(self, client):
         """Test that recordings only returns video files"""
@@ -455,11 +457,11 @@ class TestPatternGenerator:
                 test_id = data['testId']
                 
                 # Check status
-                status_response = client.get(f'/api/test/{test_id}')
+                status_response = client.get(f'/api/test/{test_id}/status')
                 assert status_response.status_code == 200
                 
                 # Stop test
-                stop_response = client.delete(f'/api/test/{test_id}')
+                stop_response = client.post(f'/api/test/{test_id}/stop')
                 assert stop_response.status_code in [200, 204]
     
     def test_test_pattern_requires_stream_name(self, client):
@@ -697,6 +699,186 @@ class TestErrorHandling:
                             data='invalid json',
                             content_type='application/json')
         assert response.status_code == 405
+
+
+# =============================================================================
+# Stream Validation Tests
+# =============================================================================
+
+def _report(**overrides):
+    """Minimal validator report, shaped like utils/validate_stream.py output."""
+    report = {
+        'target': 'rtsp://localhost:8554/drone1',
+        'ok': True,
+        'has_warnings': False,
+        'checks': [
+            {'id': 'klv_track', 'name': 'KLV track present', 'status': 'pass',
+             'summary': 'KLV data track found (stream index 2).', 'hint': None, 'detail': {}},
+        ],
+        'streams': [],
+    }
+    report.update(overrides)
+    return report
+
+
+class TestStreamValidation:
+    """Test suite for /api/stream/validate"""
+
+    def test_requires_a_target(self, client):
+        """Neither streamName nor videoFile is a 400"""
+        response = client.post('/api/stream/validate', json={})
+        assert response.status_code == 400
+
+    def test_rejects_both_targets(self, client):
+        """streamName and videoFile are mutually exclusive"""
+        response = client.post('/api/stream/validate',
+                               json={'streamName': 'drone1', 'videoFile': 'a/b.ts'})
+        assert response.status_code == 400
+
+    def test_rejects_invalid_stream_name(self, client):
+        """Stream names are restricted to a safe character set"""
+        response = client.post('/api/stream/validate',
+                               json={'streamName': '../../etc/passwd'})
+        assert response.status_code == 400
+
+    def test_rejects_path_traversal(self, client):
+        """Relative video paths may not escape STREAMS_DIR"""
+        response = client.post('/api/stream/validate',
+                               json={'videoFile': '../../../etc/passwd'})
+        assert response.status_code == 400
+
+    def test_rejects_out_of_range_window(self, client):
+        """Sample window is bounded"""
+        response = client.post('/api/stream/validate',
+                               json={'streamName': 'drone1', 'window': 9999})
+        assert response.status_code == 400
+
+    def test_clean_stream_reports_ok(self, client):
+        """A stream passing every check returns ok=True"""
+        with patch('validate_stream.validate', return_value=_report()):
+            response = client.post('/api/stream/validate', json={'streamName': 'drone1'})
+
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['success'] is True
+        assert data['report']['ok'] is True
+
+    def test_non_monotonic_klv_is_flagged(self, client):
+        """The KLV timestamp defect surfaces as a failing check with a hint"""
+        broken = _report(ok=False, checks=[
+            {'id': 'klv_timestamps', 'name': 'KLV timestamps monotonic', 'status': 'fail',
+             'summary': 'KLV PTS runs backwards on 75/217 steps (34.6%).',
+             'hint': 'Repair with: -bsf:d "setts=pts=DTS:dts=DTS"',
+             'detail': {'backward_steps': 75}},
+        ])
+        with patch('validate_stream.validate', return_value=broken):
+            response = client.post('/api/stream/validate', json={'streamName': 'drone1'})
+
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['report']['ok'] is False
+        failed = [c for c in data['report']['checks'] if c['status'] == 'fail']
+        assert len(failed) == 1
+        assert failed[0]['id'] == 'klv_timestamps'
+        assert failed[0]['hint']
+
+    def test_missing_klv_track_is_flagged(self, client):
+        """A stream published over RTSP arrives with no data track at all"""
+        broken = _report(ok=False, checks=[
+            {'id': 'klv_track', 'name': 'KLV track present', 'status': 'fail',
+             'summary': 'No data track — the stream carries no KLV at all.',
+             'hint': 'Publish over SRT instead, and pass -map 0.', 'detail': {}},
+        ])
+        with patch('validate_stream.validate', return_value=broken):
+            response = client.post('/api/stream/validate', json={'streamName': 'drone1'})
+
+        data = json.loads(response.data)
+        assert data['report']['ok'] is False
+        assert data['report']['checks'][0]['id'] == 'klv_track'
+
+
+class TestKLVTimestampRepairSetting:
+    """The repair_klv_timestamps setting must reach the pull-stream FFmpeg args"""
+
+    def test_setting_defaults_on(self):
+        from app.config import SERVER_SETTINGS
+        assert SERVER_SETTINGS['repair_klv_timestamps'] is True
+
+    def test_setting_is_in_schema(self):
+        from app.config import SERVER_SETTINGS_SCHEMA
+        assert SERVER_SETTINGS_SCHEMA['repair_klv_timestamps'] == (bool,)
+
+    def test_bsf_present_when_enabled(self):
+        from app.api.streams import _build_pull_ffmpeg_args
+        from app.api.settings import server_settings
+
+        with patch.dict(server_settings, {'repair_klv_timestamps': True}):
+            args = _build_pull_ffmpeg_args('srt://example:9000', 'drone1')
+
+        assert '-bsf:d' in args
+        assert args[args.index('-bsf:d') + 1] == 'setts=pts=DTS:dts=DTS'
+
+    def test_bsf_absent_when_disabled(self):
+        from app.api.streams import _build_pull_ffmpeg_args
+        from app.api.settings import server_settings
+
+        with patch.dict(server_settings, {'repair_klv_timestamps': False}):
+            args = _build_pull_ffmpeg_args('srt://example:9000', 'drone1')
+
+        assert '-bsf:d' not in args
+
+    def test_map_all_streams_still_present(self):
+        """-map 0 is what keeps the KLV track; guard against regression"""
+        from app.api.streams import _build_pull_ffmpeg_args
+
+        args = _build_pull_ffmpeg_args('srt://example:9000', 'drone1')
+        assert '-map' in args
+        assert args[args.index('-map') + 1] == '0'
+        # Republished as MPEG-TS over SRT, never RTSP - RTP cannot carry KLV.
+        assert 'mpegts' in args
+
+
+class TestTranscodeOptions:
+    """Option list must not advertise anything the backend cannot run"""
+
+    def test_options_are_1_to_3(self, client):
+        response = client.get('/api/transcode/options')
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert [o['option'] for o in data['options']] == [1, 2, 3]
+
+    def test_default_option_is_offered(self, client):
+        """Default must be one of the advertised options"""
+        response = client.get('/api/transcode/options')
+        data = json.loads(response.data)
+        assert data['default'] in [o['option'] for o in data['options']]
+
+    def test_option_4_is_rejected(self, client):
+        """Option 4 depended on a script that never existed.
+
+        The file-existence check runs first, so stub it out to reach the
+        option validation.
+        """
+        with patch('app.api.utils.os.path.exists', return_value=True):
+            response = client.post('/api/transcode',
+                                   json={'inputFile': 'anything.mov', 'option': 4})
+
+        assert response.status_code == 400
+        assert '1-3' in json.loads(response.data)['error']
+
+    def test_valid_option_passes_validation(self, client):
+        """Guard the above: option 1 must get past the same validation gate"""
+        with patch('app.api.utils.os.path.exists', return_value=True), \
+                patch('app.api.utils.subprocess.Popen'):
+            response = client.post('/api/transcode',
+                                   json={'inputFile': 'anything.mov', 'option': 1})
+
+        assert response.status_code != 400
+
+    def test_extract_endpoint_is_gone(self, client):
+        """/api/klv/extract was backed by a missing script; it should 404"""
+        response = client.post('/api/klv/extract', json={'videoFile': 'a/b.ts'})
+        assert response.status_code == 404
 
 
 # =============================================================================

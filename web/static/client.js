@@ -12,6 +12,10 @@ class RTSPRestreamerClient {
         this.ws = null;
         this.streams = new Map();
         this.recordingStreams = new Set(); // Track which streams are currently recording
+        // streamName -> validation report from /api/stream/validate. Survives the
+        // innerHTML rebuild in updateStreamsDisplay() so warnings stay on screen.
+        this.streamValidation = new Map();
+        this.validatingStreams = new Set();
         this.systemStartTime = null; // Will be fetched from server
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
@@ -536,6 +540,7 @@ class RTSPRestreamerClient {
 
             return `
                 <div class="stream-item">
+                    ${this.renderValidationBanner(streamName)}
                     <div class="stream-header">
                         <div class="stream-name">
                             ${safeName}
@@ -594,6 +599,9 @@ class RTSPRestreamerClient {
                                     📶 ABR
                                 </button>
                             `}
+                            <button class="btn btn-small btn-secondary" onclick="rtspClient.validateStream('${safeAttrName}')" id="validate-btn-${safeAttrName}" title="Check KLV metadata and TAK client compatibility">
+                                ${this.validatingStreams.has(streamName) ? '⏳ Checking…' : '🔎 Check KLV'}
+                            </button>
                             <button class="btn btn-small btn-warning" onclick="rtspClient.stopStream('${safeAttrName}')">
                                 ⏸️ Stop Stream
                             </button>
@@ -625,9 +633,83 @@ class RTSPRestreamerClient {
             viewersElement.textContent = totalViewers.toString();
         }
     }
-    
 
-    
+    /**
+     * Banner summarising the last /api/stream/validate result for a stream.
+     * Renders nothing until the user has run a check.
+     */
+    renderValidationBanner(streamName) {
+        const report = this.streamValidation.get(streamName);
+        if (!report) return '';
+
+        const problems = (report.checks || []).filter(c => c.status === 'fail' || c.status === 'warn');
+        if (!problems.length) {
+            return `<div class="stream-validation ok">✅ KLV &amp; TAK compatibility checks passed</div>`;
+        }
+
+        const worst = problems.some(c => c.status === 'fail') ? 'fail' : 'warn';
+        const items = problems.map(c => `
+            <li class="validation-${c.status}">
+                <strong>${this.escapeHtml(c.name)}:</strong> ${this.escapeHtml(c.summary)}
+                ${c.hint ? `<div class="validation-hint">${this.escapeHtml(c.hint)}</div>` : ''}
+            </li>
+        `).join('');
+
+        return `
+            <div class="stream-validation ${worst}">
+                <div class="stream-validation-title">
+                    ${worst === 'fail' ? '⛔ Stream problems detected' : '⚠️ Stream warnings'}
+                </div>
+                <ul class="stream-validation-list">${items}</ul>
+            </div>
+        `;
+    }
+
+    /**
+     * Run the preflight validator against a live stream and cache the report so
+     * the banner persists across the periodic stream-list refresh.
+     */
+    async validateStream(streamName) {
+        if (this.validatingStreams.has(streamName)) return;
+
+        this.validatingStreams.add(streamName);
+        const btn = document.getElementById(`validate-btn-${streamName}`);
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Checking…';
+        }
+
+        try {
+            const response = await fetch('/api/stream/validate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ streamName, window: 10 })
+            });
+            const result = await response.json();
+
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || `HTTP ${response.status}`);
+            }
+
+            this.streamValidation.set(streamName, result.report);
+
+            const failed = (result.report.checks || []).filter(c => c.status === 'fail').length;
+            if (failed) {
+                this.showNotification(`${streamName}: ${failed} problem(s) found — see the stream card`, 'error');
+            } else if (result.report.has_warnings) {
+                this.showNotification(`${streamName}: checks passed with warnings`, 'warning');
+            } else {
+                this.showNotification(`${streamName}: all checks passed`, 'success');
+            }
+        } catch (error) {
+            console.error('Stream validation failed:', error);
+            this.showNotification(`Validation failed: ${error.message}`, 'error');
+        } finally {
+            this.validatingStreams.delete(streamName);
+            this.refreshStreams();
+        }
+    }
+
     showAddStreamModal() {
         document.getElementById('add-stream-modal').style.display = 'block';
         document.getElementById('stream-name').focus();

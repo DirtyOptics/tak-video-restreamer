@@ -94,6 +94,7 @@ SERVER_SETTINGS_SCHEMA = {
     'rtsp_transport': (str,),
     'connection_timeout': (int, 100000, 60000000),
     'enable_ffmpeg_reconnect': (bool,),
+    'repair_klv_timestamps': (bool,),
     'standby_enabled': (bool,),
     'standby_timeout_minutes': (int, 0, 14400),  # 0 = infinite, max 10 days
     'udp_max_payload_size': (int, 576, 65535),
@@ -130,7 +131,17 @@ SERVER_SETTINGS = {
     'rtsp_transport': 'tcp',  # tcp or udp
     'connection_timeout': 5000000,  # microseconds
     'enable_ffmpeg_reconnect': True,
-    
+
+    # KLV metadata handling
+    # Some UAS muxers stamp each KLV packet with its video frame's B-frame PTS/DTS,
+    # so the KLV PTS runs backwards on reordered frames. That survives inside
+    # MPEG-TS (DTS stays monotonic) but breaks at the RTP hop, where only one
+    # timestamp survives — downstream readers then drop packets with
+    # "non monotonically increasing dts". Forcing PTS=DTS is a no-op on healthy
+    # streams, so this defaults on.
+    'repair_klv_timestamps': True,
+
+
     # Stream standby / persistence
     'standby_enabled': True,
     'standby_timeout_minutes': 60,  # 0 = never expire

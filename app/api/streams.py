@@ -36,6 +36,42 @@ import requests as http_requests
 logger = logging.getLogger(__name__)
 
 streams_bp = Blueprint('streams', __name__)
+
+
+def _redact_url(url: str) -> str:
+    """Return URL with password replaced by *** for safe logging."""
+    try:
+        import urllib.parse
+        p = urllib.parse.urlparse(url)
+        if p.password:
+            netloc = p.hostname
+            if p.port:
+                netloc = f'{netloc}:{p.port}'
+            netloc = f'{p.username}:***@{netloc}'
+            return p._replace(netloc=netloc).geturl()
+    except Exception:
+        pass
+    return url
+
+
+def _inject_credentials(url: str, username: str, password: str) -> str:
+    """Embed username/password into URL if not already present and creds are provided."""
+    if not username and not password:
+        return url
+    try:
+        import urllib.parse
+        p = urllib.parse.urlparse(url)
+        if p.username:  # credentials already in URL — don't overwrite
+            return url
+        netloc = p.hostname
+        if p.port:
+            netloc = f'{netloc}:{p.port}'
+        netloc = f'{urllib.parse.quote(username, safe="")}:{urllib.parse.quote(password, safe="")}@{netloc}'
+        return p._replace(netloc=netloc).geturl()
+    except Exception:
+        return url
+
+
 mediamtx = MediaMTXClient(MEDIAMTX_API_URL)
 
 # Track last time bytes were received per stream (for last_data_time)
@@ -158,8 +194,10 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
     Called both from the API endpoint and from the startup restore path.
     Raises on error.
     """
-    ffmpeg_args = _build_pull_ffmpeg_args(source_url, stream_name)
-    logger.info(f"Starting pull stream: {stream_name} from {source_url}")
+    # Embed username/password into URL when supplied as separate fields
+    ffmpeg_url = _inject_credentials(source_url, username, password)
+    ffmpeg_args = _build_pull_ffmpeg_args(ffmpeg_url, stream_name)
+    logger.info(f"Starting pull stream: {stream_name} from {_redact_url(ffmpeg_url)}")
 
     process = subprocess.Popen(
         ffmpeg_args,
@@ -501,7 +539,7 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
     transport = server_settings.get('rtsp_transport', 'tcp')
     timeout_us = server_settings.get('connection_timeout', 5000000)
     is_rtsp = source_url.lower().startswith(('rtsp://', 'rtsps://'))
-    args = ['ffmpeg']
+    args = ['ffmpeg', '-loglevel', 'warning']  # suppress frame= progress lines
     if is_rtsp:
         args.extend([
             '-rtsp_transport', transport,
@@ -533,6 +571,17 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
         '-fflags', '+genpts+discardcorrupt+nobuffer',
         '-flags', 'low_delay',
         '-c', 'copy',
+    ])
+    # Force PTS=DTS on data (KLV) tracks. Some UAS muxers stamp KLV packets with
+    # the accompanying video frame's B-frame timestamps, so the KLV PTS runs
+    # backwards across a reordered GOP. MPEG-TS tolerates that because DTS stays
+    # monotonic, but RTP carries only one timestamp — so readers downstream of
+    # MediaMTX's RTSP output drop those packets as non-monotonic. This is a no-op
+    # on streams whose KLV timestamps are already well-formed, and ffmpeg ignores
+    # -bsf:d when the input has no data track.
+    if server_settings.get('repair_klv_timestamps', True):
+        args.extend(['-bsf:d', 'setts=pts=DTS:dts=DTS'])
+    args.extend([
         # Republish over SRT/MPEG-TS rather than RTSP/RTP so KLV data tracks
         # (and any other non-AV streams) are carried losslessly. RTP cannot
         # carry KLV, which is a core TAK requirement.
@@ -544,11 +593,12 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
 
 def _finalize_recording_for_reconnect(stream_name: str):
     """Gracefully stop an active recording before a pull stream reconnect."""
-    if stream_name not in active_recordings:
+    with recording_lock:
+        recording_info = active_recordings.get(stream_name)
+    if recording_info is None:
         return
     logger.info(f"Finalizing recording for {stream_name} before reconnection")
     try:
-        recording_info = active_recordings[stream_name]
         recording_process = recording_info.get('process')
         if recording_process and recording_process.poll() is None:
             recording_process.stdin.write(b'q')
