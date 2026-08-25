@@ -2065,6 +2065,21 @@ header h1 {
 }
 .rung-label { font-weight: 700; font-size: 0.95rem; }
 .rung-budget { font-size: 0.75rem; opacity: 0.85; }
+.overview-overlay {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.85rem 0 0;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+.overview-overlay input { margin: 0; }
+.overview-overlay-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
 .overview-urls {
     margin: 0.85rem 0 0;
     font-size: 0.85rem;

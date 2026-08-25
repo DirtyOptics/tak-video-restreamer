@@ -103,6 +103,9 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
             listEl.querySelectorAll('[data-rung]').forEach((btn) => {
                 btn.addEventListener('click', () => setRung(btn.dataset.name, btn.dataset.rung));
             });
+            listEl.querySelectorAll('[data-overlay]').forEach((box) => {
+                box.addEventListener('change', () => setOverlay(box.dataset.overlay, box.checked));
+            });
             listEl.querySelectorAll('[data-restart]').forEach((btn) => {
                 btn.addEventListener('click', () => restartEncoder(btn.dataset.restart));
             });
@@ -134,6 +137,12 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
                 </div>
                 ${alert}
                 <div class="rung-bar">${buttons}</div>
+                <label class="overview-overlay">
+                    <input type="checkbox" data-overlay="${escapeHtml(name)}"${st.overlay ? ' checked' : ''}>
+                    Show fps and bitrate on the picture
+                </label>
+                <p class="overview-overlay-hint">Burned into the ATAK image on every profile. Encoder restarts when you toggle. Numbers are what this box is actually sending.</p>
+                ${st.lastError && !bad ? `<pre class="overview-log">${escapeHtml(st.lastError)}</pre>` : ''}
                 <p class="overview-urls">
                     ATAK RTSP <code>rtsp://${escapeHtml(host)}:8554/${escapeHtml(name)}</code><br>
                     ATAK SRT <code>srt://${escapeHtml(host)}:8890?streamid=read:${escapeHtml(name)}</code>
@@ -168,6 +177,22 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
                 return;
             }
             toast(name + ' → ' + (data.rung || rung).toUpperCase(), true);
+            loadOverview();
+        }
+
+        async function setOverlay(name, enabled) {
+            const res = await fetch('/api/overview/' + encodeURIComponent(name), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ overlay: enabled }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                toast(data.error || 'Overlay change failed', false);
+                loadOverview();
+                return;
+            }
+            toast(name + (enabled ? ' overlay on' : ' overlay off') + ' — encoder restarted', true);
             loadOverview();
         }
 

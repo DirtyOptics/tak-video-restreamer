@@ -10,6 +10,7 @@ This is not ABR HLS. HLS ABR stays in Settings for browser players.
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -23,7 +24,16 @@ logger = logging.getLogger(__name__)
 SRC_SUFFIX = '__src'
 DEFAULT_RUNG = 'high'
 STATE_FILE = os.path.join(DATA_DIR, 'overview_rungs.json')
+OVERLAY_STATE_FILE = os.path.join(DATA_DIR, 'overview_overlay.json')
+OVERLAY_DIR = os.path.join(DATA_DIR, 'overview-overlay')
 FFMPEG_LOG_DIR = os.path.join(LOGS_DIR, 'ffmpeg')
+FONT_CANDIDATES = (
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+    '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
+    '/opt/app/fonts/DejaVuSans.ttf',
+)
 
 # Old ids from the first ladder; rewrite on load so state/API do not keep them.
 RUNG_ALIASES = {
@@ -112,17 +122,77 @@ def rung_catalog() -> list:
     ]
 
 
+def find_font() -> str:
+    for path in FONT_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    return ''
+
+
+def _ffmpeg_filter_path(path: str) -> str:
+    return path.replace('\\', '/').replace(':', '\\:').replace("'", r"\'")
+
+
+def _format_overlay_bitrate(raw: str) -> str:
+    s = (raw or '').strip()
+    if not s or s.upper() in ('N/A', 'NA'):
+        return '-- kbps'
+    m = re.match(r'([0-9.]+)\s*([kmgKMG])?bits/s', s)
+    if not m:
+        return s.replace('bits/s', 'bps')
+    n = float(m.group(1))
+    unit = (m.group(2) or '').lower()
+    if unit == 'k':
+        kbps = n
+    elif unit == 'm':
+        kbps = n * 1000.0
+    elif unit == 'g':
+        kbps = n * 1_000_000.0
+    else:
+        kbps = n / 1000.0
+    if kbps >= 1000:
+        return f'{kbps / 1000.0:.1f} Mbps'
+    return f'{kbps:.0f} kbps'
+
+
+def _format_overlay_fps(raw: str) -> str:
+    try:
+        fps = float(raw)
+    except (TypeError, ValueError):
+        return '-- fps'
+    if fps >= 10:
+        return f'{fps:.0f} fps'
+    if fps >= 1:
+        return f'{fps:.1f} fps'
+    return f'{fps:.2f} fps'
+
+
+def _overlay_text_path(stream_name: str) -> str:
+    safe = re.sub(r'[^A-Za-z0-9._-]+', '_', stream_name).strip('_') or 'stream'
+    return os.path.join(OVERLAY_DIR, f'{safe}.txt')
+
+
+def _atomic_write(path: str, text: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='ascii', errors='replace') as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
 class OverviewManager:
     """One transcode process per public stream name."""
 
     def __init__(self):
         self._lock = threading.Lock()
         self._rungs: dict = {}
+        self._overlays: dict = {}
         self._procs: dict = {}
         self._stderr: dict = {}
         self._errors: dict = {}
         self._stopping: set = set()
         self._load()
+        self._load_overlays()
 
     def _load(self):
         try:
@@ -155,12 +225,39 @@ class OverviewManager:
         except Exception as e:
             logger.error(f"overview: could not save rungs: {e}")
 
+    def _load_overlays(self):
+        try:
+            if os.path.isfile(OVERLAY_STATE_FILE):
+                with open(OVERLAY_STATE_FILE, 'r') as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self._overlays = {
+                        str(k): bool(v) for k, v in data.items()
+                    }
+        except Exception as e:
+            logger.warning(f"overview: could not load {OVERLAY_STATE_FILE}: {e}")
+
+    def _save_overlays(self):
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            tmp = OVERLAY_STATE_FILE + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(self._overlays, f)
+            os.replace(tmp, OVERLAY_STATE_FILE)
+        except Exception as e:
+            logger.error(f"overview: could not save overlay flags: {e}")
+
     def get_rung(self, stream_name: str) -> str:
         with self._lock:
             return self._rungs.get(stream_name, DEFAULT_RUNG)
 
+    def get_overlay(self, stream_name: str) -> bool:
+        with self._lock:
+            return bool(self._overlays.get(stream_name, False))
+
     def status(self, stream_name: str) -> dict:
         rung = self.get_rung(stream_name)
+        overlay = self.get_overlay(stream_name)
         with self._lock:
             proc = self._procs.get(stream_name)
             running = bool(proc and proc.poll() is None)
@@ -176,6 +273,7 @@ class OverviewManager:
         return {
             'name': stream_name,
             'rung': rung,
+            'overlay': overlay,
             'running': running,
             'sourcePath': src,
             'sourceReady': ingest,
@@ -199,19 +297,41 @@ class OverviewManager:
         ).start()
 
     def set_rung(self, stream_name: str, rung: str, force: bool = False) -> dict:
-        rung = normalize_rung(rung)
-        if rung not in RUNGS:
-            raise ValueError(f'Unknown rung: {rung}')
+        return self.update(stream_name, rung=rung, force=force)
+
+    def set_overlay(self, stream_name: str, enabled: bool) -> dict:
+        return self.update(stream_name, overlay=bool(enabled))
+
+    def update(self, stream_name: str, rung: str | None = None, overlay: bool | None = None,
+               force: bool = False) -> dict:
+        if rung is not None:
+            rung = normalize_rung(rung)
+            if rung not in RUNGS:
+                raise ValueError(f'Unknown rung: {rung}')
         pub = (mediamtx.get_path(stream_name) or {}).get('ready')
         with self._lock:
-            current = self._rungs.get(stream_name, DEFAULT_RUNG)
+            current_rung = self._rungs.get(stream_name, DEFAULT_RUNG)
+            current_overlay = bool(self._overlays.get(stream_name, False))
+            new_rung = current_rung if rung is None else rung
+            new_overlay = current_overlay if overlay is None else bool(overlay)
             proc = self._procs.get(stream_name)
             alive = proc and proc.poll() is None
-            same = (not force) and current == rung and alive and pub
-            self._rungs[stream_name] = rung
+            same = (
+                (not force)
+                and current_rung == new_rung
+                and current_overlay == new_overlay
+                and alive
+                and pub
+            )
+            self._rungs[stream_name] = new_rung
+            self._overlays[stream_name] = new_overlay
         self._save()
+        self._save_overlays()
         if not same:
-            logger.info(f"overview {stream_name}: rung {current} -> {rung} force={force}")
+            logger.info(
+                f"overview {stream_name}: rung {current_rung} -> {new_rung} "
+                f"overlay {current_overlay} -> {new_overlay} force={force}"
+            )
             self._restart(stream_name)
         from app.websocket.broadcast import broadcast
         st = self.status(stream_name)
@@ -257,7 +377,19 @@ class OverviewManager:
 
     def _spawn(self, stream_name: str):
         rung_id = self.get_rung(stream_name)
-        cmd = self._build_cmd(stream_name, rung_id)
+        want_overlay = self.get_overlay(stream_name)
+        font = find_font() if want_overlay else ''
+        use_overlay = bool(want_overlay and font)
+        font_error = ''
+        if want_overlay and not font:
+            font_error = (
+                'Overlay is on, but no font is in the container. '
+                'Install fonts-dejavu-core (or copy a TTF to /opt/app/fonts). '
+                'Encoder is running without the overlay.'
+            )
+        if use_overlay:
+            self._seed_overlay_text(stream_name, rung_id)
+        cmd = self._build_cmd(stream_name, rung_id, overlay=use_overlay, font=font)
         os.makedirs(FFMPEG_LOG_DIR, exist_ok=True)
         log_path = os.path.join(FFMPEG_LOG_DIR, f'overview-{stream_name}.log')
         try:
@@ -271,13 +403,15 @@ class OverviewManager:
             'overridePublisher': True,
         })
 
+        stdout = subprocess.PIPE if use_overlay else subprocess.DEVNULL
         try:
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
+                stdout=stdout,
                 stderr=stderr_file,
                 start_new_session=True,
+                bufsize=0 if use_overlay else -1,
             )
         except Exception as e:
             logger.error(f"overview {stream_name}: ffmpeg start failed: {e}")
@@ -295,8 +429,20 @@ class OverviewManager:
             self._procs[stream_name] = proc
             self._stderr[stream_name] = stderr_file
             self._errors.pop(stream_name, None)
+            if font_error:
+                self._errors[stream_name] = font_error
             self._stopping.discard(stream_name)
-        logger.info(f"overview {stream_name}: encoder started rung={rung_id} pid={proc.pid}")
+        if use_overlay:
+            threading.Thread(
+                target=self._read_progress,
+                args=(stream_name, proc),
+                daemon=True,
+                name=f'overview-progress-{stream_name}',
+            ).start()
+        logger.info(
+            f"overview {stream_name}: encoder started rung={rung_id} "
+            f"overlay={use_overlay} pid={proc.pid}"
+        )
         threading.Thread(
             target=self._watch,
             args=(stream_name, proc, rung_id),
@@ -413,13 +559,53 @@ class OverviewManager:
             except Exception as e:
                 logger.error(f"overview {stream_name}: kill error: {e}")
         self._reap_orphans(stream_name)
+        if proc and proc.stdout:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
         if stderr_file and hasattr(stderr_file, 'close'):
             try:
                 stderr_file.close()
             except Exception:
                 pass
 
-    def _build_cmd(self, stream_name: str, rung_id: str) -> list:
+    def _seed_overlay_text(self, stream_name: str, rung_id: str):
+        fps = RUNGS.get(rung_id, {}).get('fps', 0)
+        text = f'{_format_overlay_fps(str(fps))}  -- kbps'
+        try:
+            _atomic_write(_overlay_text_path(stream_name), text)
+        except OSError as e:
+            logger.warning(f"overview {stream_name}: overlay text seed failed: {e}")
+
+    def _read_progress(self, stream_name: str, proc: subprocess.Popen):
+        if not proc.stdout:
+            return
+        path = _overlay_text_path(stream_name)
+        buf: dict = {}
+        try:
+            for raw in proc.stdout:
+                line = raw.decode('utf-8', errors='replace').strip()
+                if not line or '=' not in line:
+                    continue
+                key, val = line.split('=', 1)
+                buf[key] = val
+                if key != 'progress':
+                    continue
+                text = (
+                    f"{_format_overlay_fps(buf.get('fps', ''))}  "
+                    f"{_format_overlay_bitrate(buf.get('bitrate', ''))}"
+                )
+                try:
+                    _atomic_write(path, text)
+                except OSError:
+                    pass
+                buf = {}
+        except Exception as e:
+            logger.debug(f"overview {stream_name}: progress reader ended: {e}")
+
+    def _build_cmd(self, stream_name: str, rung_id: str, overlay: bool = False,
+                   font: str = '') -> list:
         from app.api.settings import server_settings
         r = RUNGS[rung_id]
         transport = server_settings.get('rtsp_transport', 'tcp')
@@ -433,6 +619,15 @@ class OverviewManager:
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
             f"fps={fps},setpts=N/{fps}/TB,format=yuv420p"
         )
+        if overlay and font:
+            text_path = _overlay_text_path(stream_name)
+            fontsize = max(14, min(32, int(h / 16)))
+            vf += (
+                f",drawtext=fontfile={_ffmpeg_filter_path(font)}"
+                f":fontsize={fontsize}:fontcolor=white"
+                f":box=1:boxcolor=black@0.55:boxborderw=6"
+                f":x=10:y=10:textfile={_ffmpeg_filter_path(text_path)}:reload=1"
+            )
         cmd = [
             'ffmpeg', '-loglevel', 'warning',
             '-rtsp_transport', transport,
@@ -466,6 +661,9 @@ class OverviewManager:
             '-f', 'mpegts',
             f'srt://127.0.0.1:8890?streamid=publish:{stream_name}',
         ]
+        if overlay:
+            cmd[1:1] = ['-stats_period', '0.5']
+            cmd[-1:-1] = ['-progress', 'pipe:1']
         return cmd
 
 

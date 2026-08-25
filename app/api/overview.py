@@ -9,6 +9,16 @@ from app.state import pull_stream_configs, pull_stream_lock
 
 logger = logging.getLogger(__name__)
 
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
 overview_bp = Blueprint('overview', __name__)
 
 
@@ -48,15 +58,24 @@ def set_overview(stream_name):
         if stream_name not in pull_stream_configs:
             return jsonify({'error': f'No pull stream named {stream_name}'}), 404
     data = request.get_json(silent=True) or {}
-    rung = normalize_rung((data.get('rung') or '').strip().lower())
-    if rung not in RUNGS:
-        return jsonify({'error': f'rung must be one of: {", ".join(RUNGS)}'}), 400
+    has_rung = 'rung' in data and str(data.get('rung') or '').strip() != ''
+    has_overlay = 'overlay' in data
+    if not has_rung and not has_overlay:
+        return jsonify({'error': 'rung or overlay required'}), 400
+    rung = None
+    overlay = None
+    if has_rung:
+        rung = normalize_rung(str(data.get('rung') or '').strip().lower())
+        if rung not in RUNGS:
+            return jsonify({'error': f'rung must be one of: {", ".join(RUNGS)}'}), 400
+    if has_overlay:
+        overlay = _as_bool(data.get('overlay'))
     try:
-        st = overview_manager.set_rung(stream_name, rung)
+        st = overview_manager.update(stream_name, rung=rung, overlay=overlay)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        logger.error(f"overview set_rung {stream_name}: {e}")
+        logger.error(f"overview update {stream_name}: {e}")
         return jsonify({'error': str(e)}), 500
     st['sourceUrl'] = pull_stream_configs[stream_name].get('source_url', '')
     return jsonify(st)
