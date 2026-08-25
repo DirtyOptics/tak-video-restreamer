@@ -18,7 +18,7 @@ from flask_socketio import SocketIO
 from app.config import SECRET_KEY, PORT, CORS_ORIGINS, LOG_LEVEL, LOGS_DIR, LOG_MAX_BYTES, LOG_BACKUP_COUNT
 
 # Import blueprints
-from app.api import health_bp, streams_bp, recordings_bp, settings_bp, utils_bp, test_bp, hls_bp, auth_bp, tls_bp
+from app.api import health_bp, streams_bp, recordings_bp, settings_bp, utils_bp, test_bp, hls_bp, auth_bp, tls_bp, overview_bp
 
 # Import websocket handlers
 from app.websocket import set_socketio, register_handlers
@@ -110,6 +110,7 @@ def create_app():
     app.register_blueprint(hls_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(tls_bp)
+    app.register_blueprint(overview_bp)
 
     # Apply rate limiting to login endpoint
     if app.limiter:
@@ -130,7 +131,7 @@ def create_app():
             if path.startswith(prefix):
                 return None
         # Protect /api/* and page routes
-        if path.startswith('/api/') or path in ('/', '/recordings', '/settings', '/utils', '/test'):
+        if path.startswith('/api/') or path in ('/', '/recordings', '/settings', '/utils', '/test', '/streamux'):
             # Already checked by @auth_required on pages, but belt-and-suspenders for API
             if _cu.is_authenticated:
                 return None
@@ -182,6 +183,11 @@ def create_app():
     @auth_required
     def videowall_page():
         return send_from_directory(static_folder, 'videowall.html')
+
+    @app.route('/streamux')
+    @auth_required
+    def overview_page():
+        return send_from_directory(static_folder, 'overview.html')
     
     logger.info(f"Flask app initialized with {len(app.blueprints)} blueprints")
     

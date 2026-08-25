@@ -26,6 +26,7 @@ from app.state import (
     recording_lock, pull_stream_lock, hidden_streams, hidden_streams_lock
 )
 from app.services.mediamtx import MediaMTXClient
+from app.services.overview import overview_manager, source_name, is_source_path
 from app.utils.codec_detection import detect_stream_codec, analyze_recording
 from app.utils.thumbnail import generate_thumbnail
 from app.websocket.broadcast import broadcast
@@ -196,6 +197,15 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
     """
     # Embed username/password into URL when supplied as separate fields
     ffmpeg_url = _inject_credentials(source_url, username, password)
+    src_path = source_name(stream_name)
+    mediamtx.add_path(src_path, {
+        'source': 'publisher',
+        'overridePublisher': True,
+    })
+    mediamtx.add_path(stream_name, {
+        'source': 'publisher',
+        'overridePublisher': True,
+    })
     ffmpeg_args = _build_pull_ffmpeg_args(ffmpeg_url, stream_name)
     logger.info(f"Starting pull stream: {stream_name} from {_redact_url(ffmpeg_url)}")
 
@@ -219,6 +229,7 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
 
     _save_pull_source(stream_name, source_url, username, password)
     threading.Thread(target=_pull_stream_loop, args=(stream_name,), daemon=True).start()
+    overview_manager.start(stream_name)
     return process
 
 
@@ -253,6 +264,10 @@ def _restore_pull_streams():
                 # Without this, the path only appears if it matches a catch-all
                 # regex rule, which may not create a proper named entry.
                 mediamtx.add_path(stream_name, {
+                    'source': 'publisher',
+                    'overridePublisher': True,
+                })
+                mediamtx.add_path(source_name(stream_name), {
                     'source': 'publisher',
                     'overridePublisher': True,
                 })
@@ -444,6 +459,9 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
     """
     stopped_components = []
 
+    overview_manager.stop(stream_name)
+    stopped_components.append('overview encoder')
+
     # Stop recording if active
     with recording_lock:
         if stream_name in active_recordings:
@@ -500,7 +518,7 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
             conn_path = conn.get('path', '')
             conn_id = conn.get('id', '')
             conn_type = conn.get('_conn_type', '')
-            if conn_path == stream_name and conn_id and conn_type:
+            if conn_path in (stream_name, source_name(stream_name)) and conn_id and conn_type:
                 if mediamtx.kick_connection(conn_type, conn_id):
                     kicked_count += 1
                     logger.info(f"Kicked {conn_type} connection {conn_id} for stream {stream_name}")
@@ -514,6 +532,9 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
         stopped_components.append('mediamtx path')
     else:
         logger.debug(f"No explicit config to delete for {stream_name} (regex-matched or already gone)")
+    src_path = source_name(stream_name)
+    if mediamtx.delete_path(src_path):
+        logger.info(f"Deleted MediaMTX source path config for: {src_path}")
 
     if remove_pull_config:
         # Hide phantom paths that linger because of regex catch-all configs
@@ -544,10 +565,6 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
         args.extend([
             '-rtsp_transport', transport,
             '-timeout', str(timeout_us),
-            # Hard per-read timeout so FFmpeg fails fast if the device connects
-            # but stops sending data (e.g. GStreamer server starts before encoding).
-            # Without this, FFmpeg hangs for several minutes before giving up.
-            '-rw_timeout', str(timeout_us),
         ])
     args.extend([
         '-buffer_size', str(PULL_STREAM_BUFFER_SIZE),
@@ -586,7 +603,7 @@ def _build_pull_ffmpeg_args(source_url: str, stream_name: str) -> list:
         # (and any other non-AV streams) are carried losslessly. RTP cannot
         # carry KLV, which is a core TAK requirement.
         '-f', 'mpegts',
-        f'srt://localhost:8890?streamid=publish:{stream_name}'
+        f'srt://localhost:8890?streamid=publish:{source_name(stream_name)}'
     ])
     return args
 
@@ -726,6 +743,7 @@ def _pull_stream_loop(stream_name: str):
                 'source': source_url,
                 'retry_count': config['retry_count']
             })
+            overview_manager.start(stream_name)
         except Exception as e:
             logger.error(f"Error starting pull stream retry for {stream_name}: {e}")
             time.sleep(delay)
@@ -753,6 +771,8 @@ def list_streams():
                 path_name = path_info.get('name', '')
                 if not path_name:
                     continue
+                if is_source_path(path_name):
+                    continue
                 with hidden_streams_lock:
                     if path_name in hidden_streams and path_info.get('ready'):
                         hidden_streams.discard(path_name)
@@ -763,6 +783,8 @@ def list_streams():
                 streams.append(_extract_stream_info(path_name, path_info, conn_map))
         else:
             for path_name, path_info in items.items():
+                if is_source_path(path_name):
+                    continue
                 with hidden_streams_lock:
                     if path_name in hidden_streams and path_info.get('ready'):
                         hidden_streams.discard(path_name)
@@ -810,9 +832,9 @@ def list_stream_paths():
         items = paths_data if isinstance(paths_data, list) else paths_data.get('items', {})
 
         if isinstance(items, list):
-            path_names = [p.get('name', '') for p in items if p.get('name')]
+            path_names = [p.get('name', '') for p in items if p.get('name') and not is_source_path(p.get('name', ''))]
         else:
-            path_names = list(items.keys())
+            path_names = [n for n in items.keys() if not is_source_path(n)]
 
         return jsonify(path_names)
 
@@ -1096,6 +1118,8 @@ def stop_pull_stream(stream_name):
             process = active_pull_streams[stream_name]
 
         _terminate_process(process)
+
+        overview_manager.stop(stream_name)
 
         with pull_stream_lock:
             if stream_name in active_pull_streams:

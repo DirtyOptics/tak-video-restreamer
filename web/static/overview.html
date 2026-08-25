@@ -1,0 +1,179 @@
+<!--
+Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamUx — TAK Video Restreamer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <a href="/" class="header-brand">
+                        <img src="/static/tak_video_restreamer_logo.png" alt="TAK Video Restreamer Logo" class="header-logo">
+                        <div>
+                            <h1>TAK Video Restreamer</h1>
+                        </div>
+                    </a>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">Dashboard</a>
+                    <a href="/streamux" class="nav-link active">StreamUx</a>
+                    <a href="/recordings" class="nav-link">Recordings</a>
+                    <a href="/utils" class="nav-link">Utils</a>
+                    <a href="/test" class="nav-link">Test Video</a>
+                    <a href="/videowall" class="nav-link">Video Wall</a>
+                    <a href="/settings" class="nav-link">Settings</a>
+                    <a href="#" class="nav-link" id="logout-link" style="color: var(--accent-danger);">Logout</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <section class="card">
+                <h2>StreamUx</h2>
+                <p class="overview-lead">
+                    StreamUx is all about the end users experience. Often video is sent with no consideration
+                    to the medium in which it travels. When utilising low bandwidth links often this video can fail.
+                    Yes we could adjust at the source, but often the reach back into the source after the fact is not ideal.
+                    StreamUx bridges the gap and attempts to capture it at the gateway and push it through at a rate that will just work.
+                </p>
+            </section>
+
+            <section class="card">
+                <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                    <h2 style="margin:0;">Pull streams</h2>
+                    <button class="btn btn-small btn-secondary" id="overview-refresh">Refresh</button>
+                </div>
+                <div id="overview-empty" class="empty-state" style="display:none;">
+                    <p>No pull streams. Add a Pull on the Dashboard (e.g. Frigate <code>yt_loop3</code>), then set the ATAK rung here.</p>
+                </div>
+                <div id="overview-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <div id="overview-toast" class="overview-toast" hidden></div>
+
+    <script>
+        const logoutLink = document.getElementById('logout-link');
+        logoutLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            fetch('/api/auth/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
+        });
+
+        const listEl = document.getElementById('overview-list');
+        const emptyEl = document.getElementById('overview-empty');
+        const toastEl = document.getElementById('overview-toast');
+        let catalog = [];
+
+        function toast(msg, ok) {
+            toastEl.hidden = false;
+            toastEl.textContent = msg;
+            toastEl.className = 'overview-toast ' + (ok ? 'ok' : 'err');
+            setTimeout(() => { toastEl.hidden = true; }, 3500);
+        }
+
+        function escapeHtml(s) {
+            return String(s || '').replace(/[&<>"'`]/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;'
+            }[c]));
+        }
+
+        function hostHint() {
+            return window.location.hostname || '192.168.4.50';
+        }
+
+        async function loadOverview() {
+            const res = await fetch('/api/overview');
+            if (!res.ok) {
+                toast('Could not load overview (' + res.status + ')', false);
+                return;
+            }
+            const data = await res.json();
+            catalog = data.rungs || [];
+            const streams = data.streams || [];
+            emptyEl.style.display = streams.length ? 'none' : 'block';
+            listEl.innerHTML = streams.map(renderStream).join('');
+            listEl.querySelectorAll('[data-rung]').forEach((btn) => {
+                btn.addEventListener('click', () => setRung(btn.dataset.name, btn.dataset.rung));
+            });
+            listEl.querySelectorAll('[data-restart]').forEach((btn) => {
+                btn.addEventListener('click', () => restartEncoder(btn.dataset.restart));
+            });
+        }
+
+        function renderStream(st) {
+            const name = st.name;
+            const host = hostHint();
+            const buttons = catalog.map((r) => {
+                const active = st.rung === r.id ? ' active' : '';
+                return `<button type="button" class="rung-btn${active}" data-name="${escapeHtml(name)}" data-rung="${r.id}" title="${escapeHtml(r.budget)}">
+                    <span class="rung-label">${escapeHtml(r.label)}</span>
+                    <span class="rung-budget">${escapeHtml(r.budget)}</span>
+                </button>`;
+            }).join('');
+            const ingest = st.sourceReady ? 'ingest ready' : 'ingest down';
+            const published = st.publishedReady ? 'ATAK path live' : 'ATAK path down';
+            const enc = st.running ? 'ffmpeg on' : 'ffmpeg off';
+            const bad = !st.publishedReady;
+            const alert = bad ? `<div class="overview-alert">
+                <strong>${escapeHtml(published)}</strong> — VLC/ATAK will fail until the encoder is back.
+                <button type="button" class="btn btn-small" data-restart="${escapeHtml(name)}">Restart encoder</button>
+                ${st.lastError ? `<pre class="overview-log">${escapeHtml(st.lastError)}</pre>` : ''}
+            </div>` : '';
+            return `<div class="overview-stream${bad ? ' down' : ''}">
+                <div class="overview-stream-head">
+                    <h3>${escapeHtml(name)}</h3>
+                    <span class="overview-meta">${escapeHtml(enc)} · ${escapeHtml(ingest)} · ${escapeHtml(published)}</span>
+                </div>
+                ${alert}
+                <div class="rung-bar">${buttons}</div>
+                <p class="overview-urls">
+                    ATAK RTSP <code>rtsp://${escapeHtml(host)}:8554/${escapeHtml(name)}</code><br>
+                    ATAK SRT <code>srt://${escapeHtml(host)}:8890?streamid=read:${escapeHtml(name)}</code>
+                </p>
+            </div>`;
+        }
+
+        async function restartEncoder(name) {
+            const res = await fetch('/api/overview/restart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                toast(data.error || 'Restart failed', false);
+                return;
+            }
+            toast('Restarted encoder for ' + name, true);
+            setTimeout(loadOverview, 2000);
+        }
+
+        async function setRung(name, rung) {
+            const res = await fetch('/api/overview/' + encodeURIComponent(name), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rung }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                toast(data.error || 'Rung change failed', false);
+                return;
+            }
+            toast(name + ' → ' + (data.rung || rung).toUpperCase(), true);
+            loadOverview();
+        }
+
+        document.getElementById('overview-refresh').addEventListener('click', loadOverview);
+        loadOverview();
+        setInterval(loadOverview, 4000);
+    </script>
+</body>
+</html>

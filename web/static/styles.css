@@ -2012,3 +2012,100 @@ header h1 {
     margin-top: 2px;
     line-height: 1.4;
 }
+
+/* ATAK overview ladder (not ABR HLS) */
+.overview-lead {
+    color: var(--text-secondary);
+    line-height: 1.55;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+}
+.overview-lead.muted { color: var(--text-muted); font-size: 0.9rem; }
+.overview-stream {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    margin-top: 1rem;
+}
+.overview-stream-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+}
+.overview-stream-head h3 { margin: 0; }
+.overview-meta { color: var(--text-muted); font-size: 0.85rem; }
+.rung-bar {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+.rung-btn {
+    flex: 1 1 10rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    padding: 0.7rem 0.85rem;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+}
+.rung-btn:hover { border-color: var(--accent-primary, #5ec8e8); }
+.rung-btn.active {
+    background: linear-gradient(135deg, #0e7490 0%, #155e75 100%);
+    color: #fff;
+    border-color: #0e7490;
+}
+.rung-label { font-weight: 700; font-size: 0.95rem; }
+.rung-budget { font-size: 0.75rem; opacity: 0.85; }
+.overview-urls {
+    margin: 0.85rem 0 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+.overview-toast {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    padding: 0.65rem 1rem;
+    border-radius: 6px;
+    background: #1e293b;
+    color: #fff;
+    z-index: 50;
+}
+.overview-toast.ok { background: #059669; }
+.overview-toast.err { background: #b91c1c; }
+
+.overview-stream.down { border-color: #b91c1c; }
+.overview-alert {
+    background: #3f1d1d;
+    border: 1px solid #b91c1c;
+    color: #fecaca;
+    border-radius: 6px;
+    padding: 0.75rem 0.9rem;
+    margin-bottom: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+.overview-log {
+    margin: 0;
+    width: 100%;
+    max-height: 8rem;
+    overflow: auto;
+    font-size: 0.75rem;
+    background: #1a1a1a;
+    padding: 0.5rem;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    color: #e5e7eb;
+}
