@@ -9,6 +9,6 @@ Services module initialization
 """
 from .mediamtx import MediaMTXClient
 from .abr import abr_manager, ABRManager
-from .overview import overview_manager, OverviewManager
+from .streamux import streamux_manager, StreamuxManager
 
-__all__ = ['MediaMTXClient', 'abr_manager', 'ABRManager', 'overview_manager', 'OverviewManager']
+__all__ = ['MediaMTXClient', 'abr_manager', 'ABRManager', 'streamux_manager', 'StreamuxManager']

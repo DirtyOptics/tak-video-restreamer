@@ -8,7 +8,6 @@ This is distributed in the hope that it will be useful, but without any warranty
 Test Pattern API endpoints
 """
 import logging
-import os
 import re
 import subprocess
 import time

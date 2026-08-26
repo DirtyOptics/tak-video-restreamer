@@ -70,7 +70,6 @@ def _apply_mtu_to_mediamtx(mtu: int):
 
 def load_and_apply_server_settings():
     """Load persisted settings from disk and apply relevant ones (e.g. MTU) to MediaMTX."""
-    global server_settings
     settings_file = _server_settings_file()
     if os.path.exists(settings_file):
         try:
@@ -254,7 +253,6 @@ def get_settings():
 @settings_bp.route('/api/settings', methods=['POST'])
 def update_settings():
     """Update server settings with type validation"""
-    global server_settings
     try:
         data = request.get_json()
         if not data:

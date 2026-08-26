@@ -37,7 +37,7 @@ def login():
     user = _check_credentials(username, password)
     if user:
         login_user(user, remember=True)
-        audit_log('login', f'User logged in', user=username)
+        audit_log('login', 'User logged in', user=username)
         return jsonify({
             'success': True,
             'redirect': '/',

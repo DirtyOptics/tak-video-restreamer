@@ -8,7 +8,6 @@ This is distributed in the hope that it will be useful, but without any warranty
 Auto-cleanup service for old recordings and disk space management.
 Controlled by server_settings: auto_cleanup_enabled, cleanup_days, min_free_space_gb.
 """
-import os
 import shutil
 import threading
 import time

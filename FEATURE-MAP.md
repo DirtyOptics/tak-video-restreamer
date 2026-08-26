@@ -3,6 +3,8 @@
 Complete inventory of every feature, API endpoint, service, and configuration option.
 Intended as a porting reference.
 
+**Fork / upstream (DirtyOptics):** product branch is `streamux-airbreach`; `main` tracks [raytheonbbn/tak-video-restreamer](https://github.com/raytheonbbn/tak-video-restreamer). Do not merge StreamUx into `main`. When pushing live work, commit onto `streamux-airbreach`. **Eventual** Raytheon updates: sync `main`, then merge `main` → `streamux-airbreach` and resolve glue (`streams.py`, `__init__` wiring, shared HTML/CSS) — StreamUx modules stay. Full operator path: [airbreach-lab/HANDOVER.md](../HANDOVER.md) gotcha **12**.
+
 ---
 
 ## Table of Contents
@@ -13,23 +15,24 @@ Intended as a porting reference.
 4. [REST API — Recording](#4-rest-api--recording)
 5. [REST API — Recordings (Files)](#5-rest-api--recordings-files)
 6. [REST API — Pull Streams](#6-rest-api--pull-streams)
-7. [REST API — ABR / HLS Transcoding](#7-rest-api--abr--hls-transcoding)
-8. [REST API — HLS File Serving](#8-rest-api--hls-file-serving)
-9. [REST API — Test Patterns](#9-rest-api--test-patterns)
-10. [REST API — Settings](#10-rest-api--settings)
-11. [REST API — TLS / Certificates](#11-rest-api--tls--certificates)
-12. [REST API — Authentication](#12-rest-api--authentication)
-13. [REST API — Health & Status](#13-rest-api--health--status)
-14. [REST API — Transcode & KLV Extraction](#14-rest-api--transcode--klv-extraction)
-15. [WebSocket Events](#15-websocket-events)
-16. [Web Pages (UI)](#16-web-pages-ui)
-17. [Services](#17-services)
-18. [Persistence Files](#18-persistence-files)
-19. [Configuration (Environment Variables)](#19-configuration-environment-variables)
-20. [Runtime Server Settings](#20-runtime-server-settings)
-21. [Utility Modules](#21-utility-modules)
-22. [External Process Management (FFmpeg)](#22-external-process-management-ffmpeg)
-23. [Security Model](#23-security-model)
+7. [REST API — StreamUx](#7-rest-api--streamux)
+8. [REST API — ABR / HLS Transcoding](#8-rest-api--abr--hls-transcoding)
+9. [REST API — HLS File Serving](#9-rest-api--hls-file-serving)
+10. [REST API — Test Patterns](#10-rest-api--test-patterns)
+11. [REST API — Settings](#11-rest-api--settings)
+12. [REST API — TLS / Certificates](#12-rest-api--tls--certificates)
+13. [REST API — Authentication](#13-rest-api--authentication)
+14. [REST API — Health & Status](#14-rest-api--health--status)
+15. [REST API — Transcode & KLV Extraction](#15-rest-api--transcode--klv-extraction)
+16. [WebSocket Events](#16-websocket-events)
+17. [Web Pages (UI)](#17-web-pages-ui)
+18. [Services](#18-services)
+19. [Persistence Files](#19-persistence-files)
+20. [Configuration (Environment Variables)](#20-configuration-environment-variables)
+21. [Runtime Server Settings](#21-runtime-server-settings)
+22. [Utility Modules](#22-utility-modules)
+23. [External Process Management (FFmpeg)](#23-external-process-management-ffmpeg)
+24. [Security Model](#24-security-model)
 
 ---
 
@@ -78,7 +81,8 @@ All endpoints require authentication unless noted.
 | `GET` | `/api/streams/paths` | Returns a plain array of stream name strings. |
 | `GET` | `/api/streams/<name>` | Get details for one stream. Adds `pulling`, `recordingInfo`, `pullInfo` when applicable. |
 | `POST` | `/api/streams/<name>` | Create a persistent MediaMTX path config so the stream name survives publisher disconnect. Body: `{"source": "publisher"}`. |
-| `POST` | `/api/streams/<name>/stop` | Kick all active connections (RTSP/SRT/RTMP) for a stream, stop recording and test publishers. Does NOT delete the path or pull config. |
+| `POST` | `/api/streams/<name>/stop` | Disable ingest: stop pull FFmpeg, encoder, recording, kick clients, remove MediaMTX paths. Keeps the pull config (in memory and `pull_sources.json` with `stopped: true`) so Dashboard/StreamUx still show a stopped card. |
+| `POST` | `/api/streams/<name>/start` | Resume a stopped pull from the saved URL. Re-creates MediaMTX paths and starts FFmpeg + encoder. |
 | `DELETE` | `/api/streams/<name>` | Full delete: stop all components, kick connections, delete MediaMTX path config, remove pull persistence, add to hidden set so phantom path is suppressed. |
 
 **Stream object fields:**
@@ -177,11 +181,36 @@ ffmpeg -rtsp_transport tcp -buffer_size <N> -max_delay <N>
 - `exponential_backoff` (default: false) — doubles delay each attempt up to `max_backoff_delay`
 - On disconnect, finalizes any active recording, waits, restarts FFmpeg
 - Broadcasts `pull_stream_retrying`, `pull_stream_reconnected`, `pull_stream_failed`
-- Config survives container restart via `pull_sources.json` (auto-restored 10s after startup)
+- Config survives container restart via `pull_sources.json` (live pulls auto-restored 10s after startup; `stopped: true` entries stay listed but do not auto-start)
 
 ---
 
-## 7. REST API — ABR / HLS Transcoding
+## 7. REST API — StreamUx
+
+StreamUx is **not** ABR HLS. Fat ingest stays on `{name}__src` (stream copy). One published RTSP/SRT path on `{name}` for ATAK. **Encoding on** (default): Profiles **Low / Medium / High** (x264). **Encoding off:** cheap `-c copy` passthrough of `{name}__src` onto `{name}` so existing viewers keep the picture; ingest stays up; does **not** call Dashboard Stop. Hard cutover 2026-08-26: `/api/overview` is gone; JSON uses `profiles` / `profile` (no `rungs` / `rung` aliases).
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/streamux` | Catalog + per-pull status. `{profiles: [...], streams: [...]}`. |
+| `GET` | `/api/streamux/hw` | Box stats for the StreamUx page. `{scope, cpu, memory, disk, temp, uptime}`. `scope.stats` is `host_kernel` (CPU/meminfo/uptime from `/proc` — kernel-global) or `unavailable`. `temp` is `{celsius, type}` from `/sys/class/thermal` (prefers `cpu-thermal`; `celsius` null if no zone). `scope.processes` is `container` (this `tvr-edge` PID namespace) unless `/host/proc` (or `STREAMUX_HOST_PROC`) is mounted, then `host`. Query `?procs=1` adds `top_cpu` / `top_ram` (name, cpu_percent of whole box, ram_percent, ram_bytes, pid). ffmpeg names include `publish:<pull>` only — no source URLs. Auth same as other `/api/streamux` routes. |
+| `GET` | `/api/streamux/<name>` | Status for one pull: `name`, `profile` (`low`/`medium`/`high`), `overlay`, `encoding` (bool, missing persist = on), `mode` (`encode` / `passthrough`), `running`, `sourcePath`, `sourceReady`, `publishedReady`, `lastError`, `sourceUrl`, `stopped`. `lastError` is always included (empty string if none). UI shows it on the card when set, including when Streaming is off / stuck. |
+| `GET` | `/api/streamux/<name>/log` | Encoder log tail. `{name, lastError, lines: ["..."]}`. Query `lines` default 100, max 100. Reads from EOF (`streamux-<name>.log`, else legacy `overview-<name>.log`). 404 if not a known pull. Empty `lines` if no file yet. On-demand (and while an open panel has Auto-scroll); not part of the main status poll. |
+| `PUT` | `/api/streamux/<name>` | Change profile and/or overlay and/or encoding. Body must include `profile` and/or `overlay` and/or `encoding`. `profile` required **not** `rung`. Overlay-only and encoding-only are allowed. Encoding on → x264 profile encode; off → passthrough copy (ingest stays up, published path stays, no MTX reader kick / no `_stop_stream_components`). Profile PUT while encoding is off returns **409** (`Turn encoding on to change profile`) unless the same body also sets `encoding: true`. Encoder/passthrough ffmpeg restarts when the live mode actually changes. 409 if the pull is stopped. |
+| `POST` | `/api/streamux/restart` | Force-restart the **profile encoder**. Body: `{"name": "<stream>"}`. **409** if encoding is off. |
+
+**Profile catalog (`profiles`):** `id` `low` / `medium` / `high`, plus `label`, `detail`, `budget`. Default for new pulls is **Medium** (`DEFAULT_PROFILE`) with **encoding on**. On-disk ids `floor`/`mid`/`g2g` still rewrite to `low`/`medium`/`high` (profile-id aliases, not API field names). Missing `encoding` key = **on**.
+
+**Encoding control (StreamUx card):** compact `.st` pill in `.streamux-meta` next to ffmpeg / ingest / Streaming (CSS cache-bust `v=streamux-overlay-lock-20260826`). Off = no x264; ingest/pull stays up; published RTSP/SRT is a cheap copy of `{name}__src`. Profile buttons disabled with hint “Turn encoding on to change profile”. Overlay checkbox is **disabled** while encoding is off (persist flag stays; it applies again when encoding is on — `-c copy` cannot burn overlay). Encoding off shows **passthrough** (not Dashboard Stopped). `streamux_manager.start` (Dashboard pull start / restore / retry) spawns passthrough instead of x264 when encoding is off.
+
+**WebSocket:** `streamux_profile` with the same status object as GET.
+
+**Persistence:** `streamux_profiles.json` is `{stream_name: {profile, encoding}}` (legacy string values migrate; missing encoding = on), `streamux_overlay.json`, overlay dir `streamux-overlay/`. One-shot migrate from `overview_rungs.json` / `overview_overlay.json` / `overview-overlay` if the new path is missing. Encoder logs `streamux-{name}.log` (new processes only; passthrough spawns append too).
+
+**Client URLs (unchanged):** `rtsp://<host>:8554/<name>` · `srt://<host>:8890?streamid=read:<name>`.
+
+---
+
+## 8. REST API — ABR / HLS Transcoding
 
 ABR = Adaptive Bitrate. Multi-rendition FFmpeg → HLS segments on disk. Served by Flask at `/hls/`.
 
@@ -219,7 +248,7 @@ ABR = Adaptive Bitrate. Multi-rendition FFmpeg → HLS segments on disk. Served 
 
 ---
 
-## 8. REST API — HLS File Serving
+## 9. REST API — HLS File Serving
 
 Served at `PORT` (3000) by Flask, not by MediaMTX.
 
@@ -244,7 +273,7 @@ Served at `PORT` (3000) by Flask, not by MediaMTX.
 
 ---
 
-## 9. REST API — Test Patterns
+## 10. REST API — Test Patterns
 
 Generates synthetic video+audio via FFmpeg lavfi and publishes to MediaMTX.
 
@@ -269,7 +298,7 @@ All test publishers are tracked in `active_tests` dict and are stopped when the 
 
 ---
 
-## 10. REST API — Settings
+## 11. REST API — Settings
 
 | Method | Path | Description |
 |---|---|---|
@@ -291,7 +320,7 @@ All test publishers are tracked in `active_tests` dict and are stopped when the 
 
 ---
 
-## 11. REST API — TLS / Certificates
+## 12. REST API — TLS / Certificates
 
 Separate blueprint (`tls_api.py`) using `app.services.tls`.
 
@@ -307,7 +336,7 @@ Separate blueprint (`tls_api.py`) using `app.services.tls`.
 
 ---
 
-## 12. REST API — Authentication
+## 13. REST API — Authentication
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -328,7 +357,7 @@ Separate blueprint (`tls_api.py`) using `app.services.tls`.
 
 ---
 
-## 13. REST API — Health & Status
+## 14. REST API — Health & Status
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -337,7 +366,7 @@ Separate blueprint (`tls_api.py`) using `app.services.tls`.
 
 ---
 
-## 14. REST API — Transcode & KLV Extraction
+## 15. REST API — Transcode & KLV Extraction
 
 File transcoding and KLV metadata extraction endpoints in `app.api.utils`.
 
@@ -363,7 +392,7 @@ File transcoding and KLV metadata extraction endpoints in `app.api.utils`.
 
 ---
 
-## 15. WebSocket Events
+## 16. WebSocket Events
 
 Server-sent events (Flask-SocketIO). Clients connect to the same port as the web UI (3000).
 
@@ -389,10 +418,11 @@ Server-sent events (Flask-SocketIO). Clients connect to the same port as the web
 | `stream_standby_update` | list of standby records | Stream goes active or to standby |
 | `transcode_complete` | `{id, inputFile, option, success, outputFile?, duration?, error?}` | Transcode finished (success or failure indicated by `success` flag) |
 | `transcode_cancelled` | `{id}` | Transcode job cancelled |
+| `streamux_profile` | `{name, profile, overlay, running, sourcePath, sourceReady, publishedReady, lastError}` | StreamUx profile or overlay changed / encoder restarted |
 
 ---
 
-## 16. Web Pages (UI)
+## 17. Web Pages (UI)
 
 All pages require authentication (redirects to `/login`). All share the same nav header.
 
@@ -400,6 +430,7 @@ All pages require authentication (redirects to `/login`). All share the same nav
 |---|---|---|
 | `/login` | `login.html` | Login form. Warns if default password is in use. |
 | `/` | `index.html` | **Dashboard.** Lists active streams with cards. Per-stream: protocol/source info, bytes in/out, reader count, Start/Stop Pull, Record, ABR toggle, Delete, Stream Details modal. Displays system status (uptime, disk, active recordings, pull streams). |
+| `/streamux` | `overview.html` | **StreamUx.** Hardware Monitor (CPU / Memory / Disk / Temp / Uptime + collapsible What’s using CPU/RAM?) between the intro and **Profiles**. Profiles Low / Medium / High for each pull. Overlay fps/bitrate. Status pills (ffmpeg / ingest / Streaming). RTSP `:8554` and SRT `:8890` client URLs. Not ABR HLS. |
 | `/recordings` | `recordings.html` | Browse all recording files. Filter by stream, sort by date/size/name. Thumbnail previews. Download, delete, bulk-delete. View/edit keywords. View metadata. |
 | `/settings` | `settings.html` | Runtime settings editor (recording, reconnect, SRT, ABR renditions, standby). Auto-record toggle. ABR global settings. SRT URL parameter builder. TLS certificate management. |
 | `/utils` | `utils.html` | Utility tools. Two tabs: **Transcode Video** (select recording + transcode option, progress bar) and **Extract KLV** (extract STANAG 4609 metadata from recordings). |
@@ -414,7 +445,7 @@ All pages require authentication (redirects to `/login`). All share the same nav
 
 ---
 
-## 17. Services
+## 18. Services
 
 ### `app.services.mediamtx.MediaMTXClient`
 
@@ -440,6 +471,24 @@ Singleton. Manages one FFmpeg process per stream for ABR HLS.
 - `restore_state()` — on startup, re-enables ABR for saved streams after 15s
 - `apply_settings(settings)` — reload renditions, restart all running ABR processes
 - `_wait_for_source_and_start(name)` — polls MediaMTX path readiness (up to 10 × 5s)
+
+### `app.services.streamux.StreamuxManager`
+
+Singleton. One published ffmpeg per pull stream (ATAK path `{name}`; ingest `{name}__src`). Encoding on = H.264 profile encode; encoding off = `-c copy` passthrough.
+
+- `start(stream_name)` — ensure published-path ffmpeg is running (encode or passthrough; non-blocking). Pull start / restore / retry call this; encoding off does **not** start x264.
+- `stop(stream_name)` — kill that ffmpeg and drop `{name}__src` path (Dashboard Stop/Delete only — not the Encoding checkbox)
+- `status(stream_name)` — `profile`, overlay, `encoding`, `mode`, running, ingest/published ready, lastError
+- `update(stream_name, profile=, overlay=, encoding=)` — persist, restart ffmpeg if live mode changes, broadcast `streamux_profile`. Encoding off does not delete pull config, kick MTX readers, or call `_stop_stream_components`.
+- `restart(stream_name)` — force encoder restart at current profile; raises `EncodingOff` if encoding is off
+- Persistence: `streamux_profiles.json` (`{name: {profile, encoding}}`), `streamux_overlay.json`; one-shot migrate from `overview_rungs.json` / `overview_overlay.json`
+
+### `app.services.hoststats.HostStats`
+
+Reads Linux `/proc` for the StreamUx CM5 card. No `psutil`, no `docker.sock`.
+
+- `snapshot(include_procs=)` — CPU % (delta of `/proc/stat`), memory (`MemTotal`/`MemAvailable`), disk (`shutil.disk_usage` of `DATA_DIR` bind — host filesystem), uptime (`/proc/uptime`), CPU temp (`/sys/class/thermal`, prefers `cpu-thermal`). Process table from `/host/proc` when mounted, else container `/proc`.
+- `read_hw()` — Flask wrapper; never raises.
 
 ### `app.services.standby.StandbyManager`
 
@@ -471,13 +520,16 @@ Background daemon that manages disk space and recording age. Started on app init
 
 ---
 
-## 18. Persistence Files
+## 19. Persistence Files
 
 All in `DATA_DIR` (default `/opt/app/data`, local: `data/`).
 
 | File | Format | Purpose |
 |---|---|---|
-| `pull_sources.json` | `{stream_name: {source_url, username, password}}` | Pull stream configs. Loaded on startup, auto-restored 10s after launch. |
+| `pull_sources.json` | `{stream_name: {source_url, username, password, stopped?}}` | Pull stream configs. Loaded on startup, auto-restored 10s after launch. |
+| `streamux_profiles.json` | `{stream_name: {profile: "low"|"medium"|"high", encoding: bool}}` | StreamUx profile + encoding flag per pull. Missing `encoding` = on. Legacy `{name: "medium"}` strings migrate. One-shot migrate from `overview_rungs.json`. |
+| `streamux_overlay.json` | `{stream_name: bool}` | Overlay on/off per pull. One-shot migrate from `overview_overlay.json`. |
+| `streamux-overlay/` | `{stream}.txt` | Live fps/bitrate text for drawtext. One-shot migrate from `overview-overlay/`. |
 | `abr_state.json` | `{streams: ["name1", "name2"]}` | Which streams had ABR enabled. Restored 15s after startup. |
 | `abr_settings.json` | `{medium_enabled, high: {...}, medium: {...}, low: {...}}` | ABR rendition settings (resolution, bitrate, audio bitrate per tier). |
 | `srt_settings.json` | `{port, latency, maxbw, pbkeylen, passphrase, transtype, ...}` | SRT URL parameter presets. |
@@ -488,7 +540,7 @@ All in `DATA_DIR` (default `/opt/app/data`, local: `data/`).
 | `certs/server.crt` | PEM | Active TLS certificate. |
 | `certs/server.key` | PEM | Active TLS private key (chmod 600). |
 | `logs/app.log` | Text (rotating) | App log. Max 10 MB, 5 backups. |
-| `logs/ffmpeg/*.log` | Text | Per-stream FFmpeg stderr logs for ABR processes. |
+| `logs/ffmpeg/*.log` | Text | Per-stream FFmpeg stderr logs (`streamux-{name}.log` for StreamUx; ABR logs unchanged). |
 | `streams/<name>/recording-*.mov` | Video | Recording outputs. |
 | `streams/<name>/*_thumb.jpg` | JPEG | Auto-generated recording thumbnails. |
 | `hls/<name>/master.m3u8` | M3U8 | ABR master playlist. |
@@ -497,7 +549,7 @@ All in `DATA_DIR` (default `/opt/app/data`, local: `data/`).
 
 ---
 
-## 19. Configuration (Environment Variables)
+## 20. Configuration (Environment Variables)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -527,7 +579,7 @@ All in `DATA_DIR` (default `/opt/app/data`, local: `data/`).
 
 ---
 
-## 20. Runtime Server Settings
+## 21. Runtime Server Settings
 
 Updated at runtime via `POST /api/settings`. Not persisted across restarts (in-memory only except where noted).
 
@@ -559,7 +611,7 @@ Updated at runtime via `POST /api/settings`. Not persisted across restarts (in-m
 
 ---
 
-## 21. Utility Modules
+## 22. Utility Modules
 
 ### `app.utils.codec_detection`
 
@@ -584,15 +636,16 @@ Updated at runtime via `POST /api/settings`. Not persisted across restarts (in-m
 
 ---
 
-## 22. External Process Management (FFmpeg)
+## 23. External Process Management (FFmpeg)
 
-Flask spawns FFmpeg child processes for five use cases:
+Flask spawns FFmpeg child processes for six use cases:
 
 | Use case | Spawner | Lifecycle |
 |---|---|---|
 | **Recording** | `app.api.recordings` | Started by `/record`, stopped by `/stop-record` (graceful `q` → terminate → kill) or auto-cleaned when FFmpeg exits. Thumbnail generated on clean exit. |
 | **ABR transcoding** | `app.services.abr.ABRManager` | Per-stream daemon. Stall-detected and restarted automatically. State persisted. |
 | **Pull stream** | `app.api.streams` | Per-stream daemon. Auto-retried on failure (infinite by default). Config persisted. |
+| **StreamUx encoder** | `app.services.streamux.StreamuxManager` | One x264 publish per pull onto `{name}` (ingest stays `{name}__src`). Restarts on profile/overlay change. |
 | **Test publisher** | `app.api.test` | Temporary (duration-limited or manual stop). Stopped when parent stream is deleted. |
 | **Transcode** | `app.api.utils` | Background job via `utils/transcode_video.py`. Progress parsed from stdout. Cancellable via SIGTERM. |
 
@@ -609,7 +662,7 @@ Flask spawns FFmpeg child processes for five use cases:
 
 ---
 
-## 23. Security Model
+## 24. Security Model
 
 | Area | Mechanism |
 |---|---|

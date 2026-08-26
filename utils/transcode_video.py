@@ -28,7 +28,7 @@ import os
 import sys
 import struct
 import multiprocessing
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 # GPU encoding configuration
@@ -238,7 +238,7 @@ def transcode_option_1(input_file, output_file, creation_time, corrected_tc, off
         '-video_track_timescale', '30000',
         '-f', 'mov',
         '-movflags', '+faststart+write_colr',
-        '-metadata', f'title=Transcoded Recording',
+        '-metadata', 'title=Transcoded Recording',
         '-metadata', f'creation_time={creation_time}',
         '-metadata', f'timecode={corrected_tc}',
         '-metadata', f'description={existing_keywords}',
@@ -256,7 +256,7 @@ def transcode_option_1(input_file, output_file, creation_time, corrected_tc, off
     
     if result:
         # Verify alignment of button press and timecode
-        print(f"\nVerifying timecode alignment...")
+        print("\nVerifying timecode alignment...")
         verify_output = get_file_metadata(output_file)
         
         if verify_output:
@@ -281,7 +281,7 @@ def transcode_option_1(input_file, output_file, creation_time, corrected_tc, off
                 print(f"  Alignment:         {alignment_diff:.3f} seconds difference")
                 
                 if alignment_diff < 0.1:  # Within 0.1 seconds
-                    print(f"  Status:            ✓ ALIGNED (within tolerance)")
+                    print("  Status:            ✓ ALIGNED (within tolerance)")
                 else:
                     print(f"  Status:            ⚠ {alignment_diff:.3f}s offset detected")
     
@@ -338,7 +338,7 @@ def transcode_option_2(input_file, output_file, creation_time, corrected_tc, off
         print(f"Error preparing KLV data: {e}")
         return False
     
-    print(f"\nEmbedding KLV into MP4 via data track...")
+    print("\nEmbedding KLV into MP4 via data track...")
     
     # Note: H.264 SEI embedding is not well-supported by FFmpeg for MP4
     # Using MP4 metadata track instead - more reliable but less standard
@@ -362,7 +362,7 @@ def transcode_option_2(input_file, output_file, creation_time, corrected_tc, off
         '-write_tmcd', '0',
         '-f', 'mp4',
         '-movflags', '+faststart',
-        '-metadata', f'title=Transcoded Recording with KLV Reference',
+        '-metadata', 'title=Transcoded Recording with KLV Reference',
         '-metadata', f'creation_time={creation_time}',
         '-metadata', f'description={existing_keywords}',
         '-metadata', f'keywords={existing_keywords}',
@@ -384,9 +384,9 @@ def transcode_option_2(input_file, output_file, creation_time, corrected_tc, off
     if result:
         print(f"\n✓ MP4 with KLV reference: {Path(output_file).name}")
         print(f"✓ KLV backup file: {Path(klv_bin_file).name}")
-        print(f"\nNote: KLV stored in separate .klv.bin file (MP4 standard limitation)")
-        print(f"For true embedded KLV, use MXF container or MPEG-TS format")
-        print(f"Use read_klv.py to read KLV from backup file")
+        print("\nNote: KLV stored in separate .klv.bin file (MP4 standard limitation)")
+        print("For true embedded KLV, use MXF container or MPEG-TS format")
+        print("Use read_klv.py to read KLV from backup file")
     
     return result
 
@@ -426,7 +426,7 @@ def transcode_option_3(input_file, output_file, creation_time, corrected_tc, off
         print(f"Error preparing KLV data: {e}")
         return False
     
-    print(f"\nTranscoding to MXF (broadcast format)...")
+    print("\nTranscoding to MXF (broadcast format)...")
     
     # Get thread count
     cpu_count = multiprocessing.cpu_count()
@@ -446,7 +446,7 @@ def transcode_option_3(input_file, output_file, creation_time, corrected_tc, off
         '-threads', str(thread_count),  # Multi-threaded MPEG-2 encoding
         '-c:a', 'pcm_s16le',   # Uncompressed PCM audio
         '-ar', '48000',        # 48kHz sample rate
-        '-metadata', f'title=Transcoded Recording with KLV Reference',
+        '-metadata', 'title=Transcoded Recording with KLV Reference',
         '-metadata', f'creation_time={creation_time}',
         '-metadata', f'description={existing_keywords}',
         '-metadata', f'keywords={existing_keywords}',
@@ -462,9 +462,9 @@ def transcode_option_3(input_file, output_file, creation_time, corrected_tc, off
     if result:
         print(f"\n✓ MXF file: {Path(output_file).name}")
         print(f"✓ KLV backup file: {Path(klv_bin_file).name}")
-        print(f"\nMXF format: SMPTE 377M compliant (broadcast standard)")
-        print(f"KLV format: STANAG 4609 UAS Datalink Local Set")
-        print(f"Note: KLV in separate file - use professional muxers for full MXF+KLV integration")
+        print("\nMXF format: SMPTE 377M compliant (broadcast standard)")
+        print("KLV format: STANAG 4609 UAS Datalink Local Set")
+        print("Note: KLV in separate file - use professional muxers for full MXF+KLV integration")
     
     return result
 
@@ -510,7 +510,7 @@ def run_ffmpeg(ffmpeg_cmd, duration):
         print()  # New line after progress bar
         
         if process.returncode == 0:
-            print(f"\n✓ Transcode successful!")
+            print("\n✓ Transcode successful!")
             return True
         else:
             stderr = process.stderr.read()
@@ -519,7 +519,7 @@ def run_ffmpeg(ffmpeg_cmd, duration):
             return False
             
     except subprocess.TimeoutExpired:
-        print(f"\n✗ FFmpeg timeout after 10 minutes")
+        print("\n✗ FFmpeg timeout after 10 minutes")
         return False
     except Exception as e:
         print(f"\n✗ Error running FFmpeg: {e}")
@@ -665,7 +665,7 @@ def transcode_video(input_file):
 
     if success:
         print(f"\nOutput: {output_file}")
-        print(f"\nCompleted successfully!")
+        print("\nCompleted successfully!")
     
     print("="*70 + "\n")
     return success

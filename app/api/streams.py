@@ -22,13 +22,11 @@ from app.config import (
 )
 from app.state import (
     active_recordings, active_pull_streams, pull_stream_configs,
-    thumbnail_executor, post_processing_queue,
+    post_processing_queue,
     recording_lock, pull_stream_lock, hidden_streams, hidden_streams_lock
 )
 from app.services.mediamtx import MediaMTXClient
-from app.services.overview import overview_manager, source_name, is_source_path
-from app.utils.codec_detection import detect_stream_codec, analyze_recording
-from app.utils.thumbnail import generate_thumbnail
+from app.services.streamux import streamux_manager, source_name, is_source_path
 from app.websocket.broadcast import broadcast
 import logging
 import json
@@ -86,7 +84,7 @@ _externally_stopped: set = set()
 # Pull-stream persistence (survives container restarts)
 # ---------------------------------------------------------------------------
 _PULL_SOURCES_FILE = os.path.join(DATA_DIR, 'pull_sources.json')
-# Format: {stream_name: {source_url, username, password}}
+# Format: {stream_name: {source_url, username, password, stopped}}
 _pull_sources: dict = {}
 
 # ---------------------------------------------------------------------------
@@ -116,9 +114,8 @@ def _load_pull_sources():
         _pull_sources = {}
 
 
-def _save_pull_source(stream_name: str, source_url: str, username: str = '', password: str = ''):
-    """Persist a pull stream's config to disk (atomic write)."""
-    _pull_sources[stream_name] = {'source_url': source_url, 'username': username, 'password': password}
+def _write_pull_sources():
+    """Atomic write of pull_sources.json."""
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         tmp = _PULL_SOURCES_FILE + '.tmp'
@@ -129,17 +126,23 @@ def _save_pull_source(stream_name: str, source_url: str, username: str = '', pas
         logger.warning(f"Could not save pull_sources.json: {e}")
 
 
+def _save_pull_source(stream_name: str, source_url: str, username: str = '', password: str = '',
+                      stopped: bool = False):
+    """Persist a pull stream's config to disk (atomic write)."""
+    _pull_sources[stream_name] = {
+        'source_url': source_url,
+        'username': username,
+        'password': password,
+        'stopped': bool(stopped),
+    }
+    _write_pull_sources()
+
+
 def _remove_pull_source(stream_name: str):
     """Remove a pull stream's persisted config so it won't be restored on restart."""
     if stream_name in _pull_sources:
         del _pull_sources[stream_name]
-        try:
-            tmp = _PULL_SOURCES_FILE + '.tmp'
-            with open(tmp, 'w') as f:
-                json.dump(_pull_sources, f, indent=2)
-            os.replace(tmp, _PULL_SOURCES_FILE)
-        except Exception as e:
-            logger.warning(f"Could not update pull_sources.json: {e}")
+        _write_pull_sources()
 
 
 # ---------------------------------------------------------------------------
@@ -224,16 +227,40 @@ def _start_pull_impl(stream_name: str, source_url: str, username: str = '', pass
             'password': password,
             'retry_count': 0,
             'auto_retry': True,
+            'stopped': False,
             'start_time': time.time()
         }
 
-    _save_pull_source(stream_name, source_url, username, password)
+    _save_pull_source(stream_name, source_url, username, password, stopped=False)
     threading.Thread(target=_pull_stream_loop, args=(stream_name,), daemon=True).start()
-    overview_manager.start(stream_name)
+    streamux_manager.start(stream_name)
     return process
 
 
+def _hydrate_stopped_pulls():
+    """Load operator-stopped pulls into memory so Dashboard/StreamUx still list them."""
+    for stream_name, cfg in list(_pull_sources.items()):
+        if not isinstance(cfg, dict) or not cfg.get('stopped'):
+            continue
+        source_url = cfg.get('source_url', '')
+        if not source_url:
+            continue
+        with pull_stream_lock:
+            if stream_name in pull_stream_configs:
+                continue
+            pull_stream_configs[stream_name] = {
+                'source_url': source_url,
+                'username': cfg.get('username', ''),
+                'password': cfg.get('password', ''),
+                'retry_count': 0,
+                'auto_retry': False,
+                'stopped': True,
+                'start_time': time.time(),
+            }
+
+
 _load_pull_sources()
+_hydrate_stopped_pulls()
 _load_blocked_ips()
 
 # Guard flag to prevent duplicate restore on re-import
@@ -258,6 +285,8 @@ def _restore_pull_streams():
                 continue
             source_url = cfg.get('source_url', '')
             if not source_url:
+                continue
+            if cfg.get('stopped'):
                 continue
             try:
                 # Re-register the named path in MediaMTX (lost on restart).
@@ -459,8 +488,8 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
     """
     stopped_components = []
 
-    overview_manager.stop(stream_name)
-    stopped_components.append('overview encoder')
+    streamux_manager.stop(stream_name)
+    stopped_components.append('streamux encoder')
 
     # Stop recording if active
     with recording_lock:
@@ -489,7 +518,16 @@ def _stop_stream_components(stream_name: str, remove_pull_config: bool = False) 
                 del pull_stream_configs[stream_name]
                 _remove_pull_source(stream_name)
             else:
-                pull_stream_configs[stream_name]['auto_retry'] = False
+                cfg = pull_stream_configs[stream_name]
+                cfg['auto_retry'] = False
+                cfg['stopped'] = True
+                _save_pull_source(
+                    stream_name,
+                    cfg.get('source_url', ''),
+                    cfg.get('username', ''),
+                    cfg.get('password', ''),
+                    stopped=True,
+                )
             # Mark as externally stopped so the pull monitor loop exits
             # without re-broadcasting. Only meaningful for pull streams; the
             # loop discards this flag itself on exit.
@@ -658,9 +696,9 @@ def _pull_stream_loop(stream_name: str):
             logger.error(f"Pull stream FFmpeg exited with code {return_code} for {stream_name}")
             logger.error(f"FFmpeg stderr: {''.join(stderr_output[-20:])}")
 
-        # Clean up process reference
+        # Clean up process reference only if this loop still owns it
         with pull_stream_lock:
-            if stream_name in active_pull_streams:
+            if active_pull_streams.get(stream_name) is process:
                 del active_pull_streams[stream_name]
 
         # Read current reconnect settings
@@ -673,10 +711,13 @@ def _pull_stream_loop(stream_name: str):
         # Check if we should auto-retry
         config = pull_stream_configs.get(stream_name)
         if not config or not config.get('auto_retry', True) or not auto_reconnect:
-            # No auto-retry — clean up and exit
-            with pull_stream_lock:
-                if stream_name in pull_stream_configs:
-                    del pull_stream_configs[stream_name]
+            # Explicit Stop leaves the config so Dashboard/StreamUx keep a disabled card.
+            # Delete already dropped the config. Unexpected no-retry disconnects still drop it.
+            keep_stopped = bool(config and config.get('stopped'))
+            if not keep_stopped:
+                with pull_stream_lock:
+                    if stream_name in pull_stream_configs:
+                        del pull_stream_configs[stream_name]
             # Only broadcast if this wasn't triggered by an explicit stop/delete endpoint
             # (those already broadcast stream_stopped / stream_deleted)
             if stream_name not in _externally_stopped:
@@ -743,7 +784,7 @@ def _pull_stream_loop(stream_name: str):
                 'source': source_url,
                 'retry_count': config['retry_count']
             })
-            overview_manager.start(stream_name)
+            streamux_manager.start(stream_name)
         except Exception as e:
             logger.error(f"Error starting pull stream retry for {stream_name}: {e}")
             time.sleep(delay)
@@ -754,17 +795,35 @@ def _pull_stream_loop(stream_name: str):
 # Route handlers
 # ---------------------------------------------------------------------------
 
+def _synthetic_pull_card(name: str, cfg: dict) -> dict:
+    """Dashboard card for a pull that is not currently a ready MediaMTX path."""
+    stopped = bool(cfg.get('stopped'))
+    return {
+        'name': name,
+        'ready': False,
+        'pullStatus': 'stopped' if stopped else 'reconnecting',
+        'retryCount': cfg.get('retry_count', 0),
+        'numReaders': 0,
+        'bytesReceived': 0,
+        'bytesSent': 0,
+        'recording': False,
+        'protocol': 'RTSP Pull',
+        'sourceAddress': None,
+        'sourceUrl': cfg.get('source_url', ''),
+        'lastDataTime': None,
+    }
+
+
 @streams_bp.route('/api/streams', methods=['GET'])
 def list_streams():
     """List all active streams from MediaMTX"""
     try:
         paths_data = mediamtx.list_paths()
-        if not paths_data:
-            return jsonify([])
-
-        conn_map = _fetch_connection_map()
         streams = []
-        items = paths_data if isinstance(paths_data, list) else paths_data.get('items', {})
+        conn_map = _fetch_connection_map() if paths_data else {}
+        items = []
+        if paths_data:
+            items = paths_data if isinstance(paths_data, list) else paths_data.get('items', {})
 
         if isinstance(items, list):
             for path_info in items:
@@ -793,26 +852,20 @@ def list_streams():
                     continue
                 streams.append(_extract_stream_info(path_name, path_info, conn_map))
 
-        # Include pull streams that are actively reconnecting but not yet visible in MediaMTX.
-        # This keeps the stream card present in the dashboard between reconnect attempts.
+        # Include pull streams that are reconnecting or operator-stopped so the
+        # Dashboard card stays after Stop (Delete is what removes it).
         seen = {s['name'] for s in streams}
         with pull_stream_lock:
+            for s in streams:
+                cfg = pull_stream_configs.get(s['name'])
+                if cfg and cfg.get('stopped'):
+                    s['pullStatus'] = 'stopped'
+                    s['ready'] = False
+                    if not s.get('sourceUrl'):
+                        s['sourceUrl'] = cfg.get('source_url', '')
             for name, cfg in list(pull_stream_configs.items()):
                 if name not in seen:
-                    streams.append({
-                        'name': name,
-                        'ready': False,
-                        'pullStatus': 'reconnecting',
-                        'retryCount': cfg.get('retry_count', 0),
-                        'numReaders': 0,
-                        'bytesReceived': 0,
-                        'bytesSent': 0,
-                        'recording': False,
-                        'protocol': 'RTSP Pull',
-                        'sourceAddress': None,
-                        'sourceUrl': cfg.get('source_url', ''),
-                        'lastDataTime': None,
-                    })
+                    streams.append(_synthetic_pull_card(name, cfg))
 
         return jsonify(streams)
 
@@ -863,7 +916,7 @@ def create_stream(stream_name):
         }
 
         if not mediamtx.add_path(stream_name, path_config):
-            return jsonify({'error': f'Failed to register path in MediaMTX'}), 409
+            return jsonify({'error': 'Failed to register path in MediaMTX'}), 409
 
         # Un-hide in case it was previously deleted
         hidden_streams.discard(stream_name)
@@ -1006,7 +1059,7 @@ def unblock_ip_endpoint(ip):
 
 @streams_bp.route('/api/streams/<path:stream_name>/stop', methods=['POST'])
 def stop_stream(stream_name):
-    """Stop a stream by kicking all connections and stopping test publishers"""
+    """Disable a stream (stop ingest/encoder) without deleting the saved pull."""
     try:
         stopped_components, kicked_count = _stop_stream_components(stream_name, remove_pull_config=False)
 
@@ -1028,6 +1081,40 @@ def stop_stream(stream_name):
 
     except Exception as e:
         logger.error(f"Error stopping stream: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+
+@streams_bp.route('/api/streams/<path:stream_name>/start', methods=['POST'])
+def start_stream(stream_name):
+    """Resume a previously stopped pull using the saved source URL."""
+    try:
+        with pull_stream_lock:
+            if stream_name in active_pull_streams:
+                return jsonify({'error': f'Stream {stream_name} is already running'}), 400
+            config = pull_stream_configs.get(stream_name)
+        if not config:
+            persisted = _pull_sources.get(stream_name)
+            config = persisted if isinstance(persisted, dict) else None
+        source_url = (config or {}).get('source_url', '')
+        if not source_url:
+            return jsonify({'error': f'No saved pull source for {stream_name}. Add the stream again.'}), 404
+
+        _start_pull_impl(
+            stream_name,
+            source_url,
+            (config or {}).get('username', ''),
+            (config or {}).get('password', ''),
+        )
+        broadcast('pull_stream_started', {'name': stream_name, 'source': source_url})
+        logger.info(f"Stream {stream_name} started from saved pull")
+        return jsonify({
+            'success': True,
+            'message': f'Stream {stream_name} started',
+            'source': source_url,
+        })
+    except Exception as e:
+        logger.error(f"Error starting stream: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
@@ -1119,13 +1206,12 @@ def stop_pull_stream(stream_name):
 
         _terminate_process(process)
 
-        overview_manager.stop(stream_name)
+        streamux_manager.stop(stream_name)
 
         with pull_stream_lock:
             if stream_name in active_pull_streams:
                 del active_pull_streams[stream_name]
             if stream_name in pull_stream_configs:
-                pull_stream_configs[stream_name]['auto_retry'] = False
                 del pull_stream_configs[stream_name]
 
         _remove_pull_source(stream_name)
@@ -1156,6 +1242,7 @@ def get_stream_pull_status(stream_name):
         return jsonify({
             'name': stream_name,
             'active': is_active,
+            'stopped': bool(config.get('stopped')),
             'sourceUrl': config['source_url'],
             'retryCount': config['retry_count'],
             'autoRetry': config.get('auto_retry', True),
@@ -1178,6 +1265,7 @@ def get_all_pull_status():
             statuses.append({
                 'name': stream_name,
                 'active': is_active,
+                'stopped': bool(config.get('stopped')),
                 'sourceUrl': config['source_url'],
                 'retryCount': config['retry_count'],
                 'autoRetry': config.get('auto_retry', True),

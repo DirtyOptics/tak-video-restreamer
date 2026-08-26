@@ -28,9 +28,8 @@ import sys
 import struct
 import time
 import argparse
-import threading
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Tuple
 import logging
 
 # Optional dependencies - graceful degradation
@@ -792,7 +791,7 @@ class UnifiedKLVParser:
                 if self.send_to_api(parsed):
                     print(f"  -> Sent to API for stream: {self.stream_name}")
                 else:
-                    print(f"  -> Failed to send to API")
+                    print("  -> Failed to send to API")
                 
                 time.sleep(2)  # 2Hz update rate
                 

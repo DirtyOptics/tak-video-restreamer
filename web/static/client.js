@@ -520,6 +520,7 @@ class RTSPRestreamerClient {
             const viewers = stream.numReaders || 0;
             const isActive = Boolean(stream.ready);
             const isReconnecting = stream.pullStatus === 'reconnecting';
+            const isStopped = stream.pullStatus === 'stopped';
             const retryCount = stream.retryCount || 0;
             const bytesReceived = stream.bytesReceived || 0;
             const bytesSent = stream.bytesSent || 0;
@@ -546,10 +547,10 @@ class RTSPRestreamerClient {
                             ${safeName}
                             ${protocol ? `<span class="protocol-badge ${protocolClass}">${safeProtocol}</span>` : ''}
                         </div>
-                        <div class="stream-status ${isActive ? 'live' : isReconnecting ? 'reconnecting' : 'offline'}">
+                        <div class="stream-status ${isActive ? 'live' : isReconnecting ? 'reconnecting' : isStopped ? 'stopped' : 'offline'}">
                             ${this.recordingStreams.has(streamName) ? '<span class="rec-label">REC</span>' : ''}
-                            <div class="status-dot ${isActive ? 'online' : isReconnecting ? 'reconnecting' : 'offline'}"></div>
-                            ${isActive ? 'Live' : isReconnecting ? `Reconnecting${retryCount > 0 ? ` (${retryCount})` : ''}` : 'Offline'}
+                            <div class="status-dot ${isActive ? 'online' : isReconnecting ? 'reconnecting' : isStopped ? 'stopped' : 'offline'}"></div>
+                            ${isActive ? 'Live' : isReconnecting ? `Reconnecting${retryCount > 0 ? ` (${retryCount})` : ''}` : isStopped ? 'Stopped' : 'Offline'}
                         </div>
                     </div>
                     <div class="stream-details">
@@ -580,7 +581,11 @@ class RTSPRestreamerClient {
                         <button class="btn btn-small btn-secondary" onclick="rtspClient.viewStreamDetails('${safeAttrName}')">
                             📊 Details
                         </button>
-                        ${isActive ? `
+                        ${isStopped ? `
+                            <button class="btn btn-small btn-secondary" onclick="rtspClient.startStream('${safeAttrName}')">
+                                ▶️ Start Stream
+                            </button>
+                        ` : isActive ? `
                             ${this.recordingStreams.has(streamName) ? `
                                 <button class="btn btn-small btn-stop-recording" onclick="rtspClient.stopRecording('${safeAttrName}')">
                                     ⏹️ Stop Recording
@@ -836,8 +841,25 @@ class RTSPRestreamerClient {
         }
     }
     
+    async startStream(streamName) {
+        try {
+            const response = await fetch(`/api/streams/${streamName}/start`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            if (data.success) {
+                this.showNotification(`Stream "${streamName}" starting`, 'success');
+            } else {
+                this.showNotification(data.error || 'Failed to start stream', 'error');
+            }
+        } catch (error) {
+            console.error('Error starting stream:', error);
+            this.showNotification('Failed to start stream', 'error');
+        }
+    }
+
     async stopStream(streamName) {
-        if (!confirm(`Stop all processes for stream "${streamName}"? (Stream path will remain)`)) {
+        if (!confirm(`Stop ingest for stream "${streamName}"? It stays in the list as stopped. Delete removes it.`)) {
             return;
         }
         

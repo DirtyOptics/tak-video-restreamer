@@ -15,10 +15,10 @@ from flask_cors import CORS
 from flask_socketio import SocketIO
 
 # Import configuration and state
-from app.config import SECRET_KEY, PORT, CORS_ORIGINS, LOG_LEVEL, LOGS_DIR, LOG_MAX_BYTES, LOG_BACKUP_COUNT
+from app.config import SECRET_KEY, CORS_ORIGINS, LOG_LEVEL, LOGS_DIR, LOG_MAX_BYTES, LOG_BACKUP_COUNT
 
 # Import blueprints
-from app.api import health_bp, streams_bp, recordings_bp, settings_bp, utils_bp, test_bp, hls_bp, auth_bp, tls_bp, overview_bp
+from app.api import health_bp, streams_bp, recordings_bp, settings_bp, utils_bp, test_bp, hls_bp, auth_bp, tls_bp, streamux_bp
 
 # Import websocket handlers
 from app.websocket import set_socketio, register_handlers
@@ -110,7 +110,7 @@ def create_app():
     app.register_blueprint(hls_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(tls_bp)
-    app.register_blueprint(overview_bp)
+    app.register_blueprint(streamux_bp)
 
     # Apply rate limiting to login endpoint
     if app.limiter:
@@ -186,7 +186,7 @@ def create_app():
 
     @app.route('/streamux')
     @auth_required
-    def overview_page():
+    def streamux_page():
         return send_from_directory(static_folder, 'overview.html')
     
     logger.info(f"Flask app initialized with {len(app.blueprints)} blueprints")

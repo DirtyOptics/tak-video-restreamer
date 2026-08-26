@@ -198,7 +198,6 @@ def start_transcode():
                     # Small delay to avoid busy waiting
                     time.sleep(0.1)
                 
-                stdout = ''.join(stdout_lines)
                 stderr = ''.join(stderr_lines)
                 
                 duration = time.time() - active_transcodes[transcode_id]['startTime']

@@ -30,9 +30,8 @@ import sys
 import pytest
 import json
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from app import create_app
 
 
@@ -55,6 +54,68 @@ def client():
 def temp_recording_dir(tmp_path):
     """Create temporary recording directory"""
     return tmp_path
+
+
+def _write_fake_proc(root):
+    """Minimal /proc tree for StreamUx CM5 hw tests (no real host /proc)."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / 'stat').write_text(
+        'cpu  100 0 50 850 0 0 0 0 0 0\n'
+        'cpu0 0 0 0 0 0 0 0 0 0 0\n'
+        'cpu1 0 0 0 0 0 0 0 0 0 0\n'
+        'cpu2 0 0 0 0 0 0 0 0 0 0\n'
+        'cpu3 0 0 0 0 0 0 0 0 0 0\n',
+        encoding='utf-8',
+    )
+    (root / 'loadavg').write_text('0.42 0.50 0.55 1/120 99\n', encoding='utf-8')
+    (root / 'uptime').write_text('109560.12 120000.00\n', encoding='utf-8')
+    (root / 'meminfo').write_text(
+        'MemTotal:        8126464 kB\n'
+        'MemAvailable:    1458176 kB\n'
+        'MemFree:          500000 kB\n',
+        encoding='utf-8',
+    )
+    py = root / '1'
+    py.mkdir()
+    (py / 'comm').write_text('python3\n', encoding='utf-8')
+    (py / 'cmdline').write_bytes(b'python3\x00-m\x00app')
+    (py / 'stat').write_text(
+        '1 (python3) S 0 0 0 0 0 0 0 0 0 0 10 5\n', encoding='utf-8',
+    )
+    (py / 'statm').write_text('2000 200 0 0 0 0 0\n', encoding='utf-8')
+    ff = root / '42'
+    ff.mkdir()
+    (ff / 'comm').write_text('ffmpeg\n', encoding='utf-8')
+    (ff / 'cmdline').write_bytes(
+        b'ffmpeg\x00-i\x00rtsp://secret:pw@cam/stream\x00'
+        b'srt://127.0.0.1:8890?streamid=publish:foot_traffic'
+    )
+    (ff / 'stat').write_text(
+        '42 (ffmpeg) S 0 0 0 0 0 0 0 0 0 0 200 50\n', encoding='utf-8',
+    )
+    (ff / 'statm').write_text('8000 800 0 0 0 0 0\n', encoding='utf-8')
+    kth = root / '2'
+    kth.mkdir()
+    (kth / 'comm').write_text('kthreadd\n', encoding='utf-8')
+    (kth / 'cmdline').write_bytes(b'')
+    (kth / 'stat').write_text(
+        '2 (kthreadd) S 0 0 0 0 0 0 0 0 0 0 1 0\n', encoding='utf-8',
+    )
+    (kth / 'statm').write_text('1 1 0 0 0 0 0\n', encoding='utf-8')
+    return root
+
+
+def _write_fake_thermal(root, zones):
+    """Minimal /sys/class/thermal tree. zones: [(name, type, milli_c), ...]."""
+    base = Path(root) / 'class' / 'thermal'
+    base.mkdir(parents=True, exist_ok=True)
+    for name, ztype, milli in zones:
+        zdir = base / name
+        zdir.mkdir(parents=True, exist_ok=True)
+        (zdir / 'type').write_text(ztype + '\n', encoding='utf-8')
+        (zdir / 'temp').write_text(str(milli) + '\n', encoding='utf-8')
+    return Path(root)
 
 
 # =============================================================================
@@ -158,76 +219,115 @@ class TestStreamsEndpoint:
         assert isinstance(data, list)
         assert len(data) > 0
     
-    def test_create_pull_stream_endpoint_exists(self, client):
-        """Test that creating pull stream endpoint exists"""
-        response = client.post('/api/streams/pull',
-                              json={'streamName': 'test', 'sourceUrl': 'rtsp://example.com/stream'},
-                              content_type='application/json')
-        assert response.status_code == 200
-    
-    def test_create_pull_stream_with_full_data(self, client):
-        """Test creating pull stream with complete data"""
-        response = client.post('/api/streams/pull',
-                              json={
-                                  'streamName': 'test-stream',
-                                  'sourceUrl': 'rtsp://example.com/test'
-                              },
-                              content_type='application/json')
-        assert response.status_code == 200
-        data = json.loads(response.data)
-        assert isinstance(data, dict)
-    
-    def test_create_pull_stream_requires_data(self, client):
-        """Test that creating pull stream endpoint exists"""
-        response = client.post('/api/streams/pull')
-        # Endpoint exists and returns 200 even without data
-        assert response.status_code == 200
-    
-    def test_create_pull_stream_requires_stream_name(self, client):
-        """Test that creating pull stream accepts source URL"""
-        response = client.post('/api/streams/pull',
-                             json={'sourceUrl': 'rtsp://example.com/stream'},
+    @staticmethod
+    def _fake_ffmpeg_process():
+        """MagicMock standing in for subprocess.Popen's ffmpeg process."""
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.pid = 12345
+        return proc
+
+    @staticmethod
+    def _clear_pull_state(stream_name):
+        """Remove any pull-stream state left behind by a test, including the
+        persisted pull_sources.json entry (otherwise a leftover entry gets
+        auto-restored - and re-launches a real ffmpeg process - the next time
+        the app starts, e.g. in a later test run)."""
+        from app.state import pull_stream_configs, active_pull_streams, pull_stream_lock
+        import app.api.streams as streams_module
+        with pull_stream_lock:
+            pull_stream_configs.pop(stream_name, None)
+            active_pull_streams.pop(stream_name, None)
+        streams_module._remove_pull_source(stream_name)
+
+    # NOTE: subprocess.Popen and threading.Thread are mocked so these tests
+    # never spawn a real ffmpeg process or the background reconnect-monitor
+    # thread. streamux_manager.start is mocked so it doesn't spin up its own
+    # background thread waiting (up to 45s) for a MediaMTX source that will
+    # never appear in this test environment.
+    @patch('app.api.streams.streamux_manager.start')
+    @patch('app.api.streams.threading.Thread')
+    @patch('app.api.streams.subprocess.Popen')
+    def test_start_pull_stream_endpoint_exists(self, mock_popen, mock_thread, mock_streamux_start, client):
+        """Test that POST /api/streams/<name>/pull starts a pull stream"""
+        mock_popen.return_value = self._fake_ffmpeg_process()
+        stream_name = 'pull-test-exists'
+        try:
+            response = client.post(f'/api/streams/{stream_name}/pull',
+                                  json={'sourceUrl': 'rtsp://example.com/stream'},
+                                  content_type='application/json')
+            assert response.status_code == 200
+        finally:
+            self._clear_pull_state(stream_name)
+
+    @patch('app.api.streams.streamux_manager.start')
+    @patch('app.api.streams.threading.Thread')
+    @patch('app.api.streams.subprocess.Popen')
+    def test_start_pull_stream_with_full_data(self, mock_popen, mock_thread, mock_streamux_start, client):
+        """Test starting a pull stream returns success and echoes the source URL"""
+        mock_popen.return_value = self._fake_ffmpeg_process()
+        stream_name = 'pull-test-full'
+        try:
+            response = client.post(f'/api/streams/{stream_name}/pull',
+                                  json={'sourceUrl': 'rtsp://example.com/test'},
+                                  content_type='application/json')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data['success'] is True
+            assert data['source'] == 'rtsp://example.com/test'
+        finally:
+            self._clear_pull_state(stream_name)
+
+    def test_start_pull_stream_requires_body(self, client):
+        """Test that starting a pull stream with an empty JSON body is rejected"""
+        response = client.post('/api/streams/pull-test-nobody/pull',
+                             json={},
                              content_type='application/json')
-        assert response.status_code == 200
-    
-    def test_create_pull_stream_requires_source_url(self, client):
-        """Test that creating pull stream accepts stream name"""
-        response = client.post('/api/streams/pull',
-                             json={'streamName': 'test'},
+        assert response.status_code == 400
+
+    def test_start_pull_stream_requires_source_url(self, client):
+        """Test that starting a pull stream without a source URL is rejected"""
+        response = client.post('/api/streams/pull-test-nourl/pull',
+                             json={'username': 'someuser'},
                              content_type='application/json')
-        assert response.status_code == 200
-    
-    def test_delete_pull_stream_endpoint_exists(self, client):
-        """Test that delete pull stream endpoint exists"""
-        response = client.delete('/api/streams/pull/test-stream')
+        assert response.status_code == 400
+
+    def test_stop_pull_stream_not_active_returns_404(self, client):
+        """Test that stopping a pull stream that isn't running returns 404"""
+        response = client.post('/api/streams/nonexistent-pull/stop-pull')
+        assert response.status_code == 404
+
+    def test_delete_nonexistent_stream_is_idempotent(self, client):
+        """Test that DELETE on a stream with no pull config still succeeds (idempotent cleanup)"""
+        response = client.delete('/api/streams/nonexistent-stream')
         assert response.status_code in [200, 404]
-    
-    def test_delete_nonexistent_pull_stream(self, client):
-        """Test deleting non-existent pull stream"""
-        response = client.delete('/api/streams/pull/nonexistent')
-        # Should return 200 even if stream doesn't exist (idempotent)
-        assert response.status_code in [200, 404]
-    
-    def test_pull_stream_workflow(self, client):
-        """Test complete pull stream workflow: create and delete"""
+
+    @patch('app.api.streams.streamux_manager.stop')
+    @patch('app.api.streams.streamux_manager.start')
+    @patch('app.api.streams.threading.Thread')
+    @patch('app.api.streams.subprocess.Popen')
+    def test_pull_stream_workflow(self, mock_popen, mock_thread, mock_streamux_start, mock_streamux_stop, client):
+        """Test complete pull stream workflow: start, appear in pull-status, then stop"""
+        mock_popen.return_value = self._fake_ffmpeg_process()
         stream_name = 'workflow-test'
-        
-        # Create pull stream
-        create_response = client.post('/api/streams/pull',
-                                     json={
-                                         'streamName': stream_name,
-                                         'sourceUrl': 'rtsp://example.com/test'
-                                     },
-                                     content_type='application/json')
-        assert create_response.status_code == 200
-        
-        # Verify it appears in streams list (optional, may not be immediate)
-        list_response = client.get('/api/streams')
-        assert list_response.status_code == 200
-        
-        # Delete pull stream
-        delete_response = client.delete(f'/api/streams/pull/{stream_name}')
-        assert delete_response.status_code in [200, 204, 404]
+        try:
+            # Start pull stream
+            start_response = client.post(f'/api/streams/{stream_name}/pull',
+                                         json={'sourceUrl': 'rtsp://example.com/test'},
+                                         content_type='application/json')
+            assert start_response.status_code == 200
+
+            # Verify it appears in the pull-status list
+            list_response = client.get('/api/pull-status')
+            assert list_response.status_code == 200
+            names = [s['name'] for s in json.loads(list_response.data)]
+            assert stream_name in names
+
+            # Stop pull stream
+            stop_response = client.post(f'/api/streams/{stream_name}/stop-pull')
+            assert stop_response.status_code == 200
+        finally:
+            self._clear_pull_state(stream_name)
 
 
 # =============================================================================
@@ -621,7 +721,570 @@ class TestWebInterface:
         response = client.get('/test')
         assert response.status_code == 200
         assert b'Test' in response.data
-    
+
+    def test_streamux_page_loads(self, client):
+        """StreamUx page is /streamux (HTML file still overview.html)."""
+        response = client.get('/streamux')
+        assert response.status_code == 200
+        assert b'StreamUx' in response.data
+        assert b'/api/streamux' in response.data
+        assert b'setProfile' in response.data
+        assert b'/api/overview' not in response.data
+        assert b'setRung' not in response.data
+        assert b'yt_loop3' not in response.data
+        assert b'lastError && published' not in response.data
+        assert b'ENCODER LOG' in response.data
+        assert b'/api/streamux/' in response.data
+        assert b'/log?lines=' in response.data
+        assert b'data-encoding' in response.data
+        assert b'Turn encoding on to change profile' in response.data
+        assert b'setEncoding' in response.data
+        assert b'encodingHold' in response.data
+        assert b'id="streamux-hw"' in response.data
+        assert b'Hardware Monitor' in response.data
+        assert b"What's using CPU/RAM?" in response.data
+        assert b'/api/streamux/hw' in response.data
+        assert b'streamux-hw-temp-20260826' in response.data
+        assert b'streamux-hw-temp' in response.data
+        assert b'>Temp<' in response.data
+        assert b'streamux-hw-scope' not in response.data
+        assert b'CM5 kernel' not in response.data
+        html = response.data.decode('utf-8')
+        assert html.find('streamux-lead') < html.find('id="streamux-hw"') < html.find('>Profiles<')
+        assert b'rung' not in response.data.lower()
+
+
+# =============================================================================
+# StreamUx
+# =============================================================================
+
+class TestStreamuxAPI:
+    """Breaking StreamUx API — /api/overview and JSON `rung` are gone."""
+
+    def test_list_profiles_catalog(self, client):
+        response = client.get('/api/streamux')
+        assert response.status_code == 200
+        data = response.get_json()
+        assert 'profiles' in data
+        assert 'rungs' not in data
+        assert [p['id'] for p in data['profiles']] == ['low', 'medium', 'high']
+        assert data['streams'] == []
+
+    def test_old_overview_routes_gone(self, client):
+        assert client.get('/api/overview').status_code == 404
+        assert client.post('/api/overview/restart', json={'name': 'x'}).status_code == 404
+        assert client.get('/api/overview/unit/log').status_code == 404
+
+    def test_log_unknown_stream_404(self, client):
+        response = client.get('/api/streamux/missing/log')
+        assert response.status_code == 404
+
+    def test_log_tail_and_legacy(self, client, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        logdir = tmp_path / 'ffmpeg'
+        logdir.mkdir()
+        (logdir / 'streamux-unit.log').write_text(
+            '\n'.join(f'line-{i}' for i in range(1, 121)) + '\n', encoding='utf-8'
+        )
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(logdir))
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            response = client.get('/api/streamux/unit/log')
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['name'] == 'unit'
+            assert 'lastError' in data
+            assert data['lines'][0] == 'line-21'
+            assert data['lines'][-1] == 'line-120'
+            assert len(data['lines']) == 100
+            capped = client.get('/api/streamux/unit/log?lines=500')
+            assert len(capped.get_json()['lines']) == 100
+            few = client.get('/api/streamux/unit/log?lines=5')
+            assert few.get_json()['lines'] == ['line-116', 'line-117', 'line-118', 'line-119', 'line-120']
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
+
+    def test_log_falls_back_to_overview_filename(self, client, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        logdir = tmp_path / 'ffmpeg'
+        logdir.mkdir()
+        (logdir / 'overview-legacy.log').write_text('old-tail\n', encoding='utf-8')
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(logdir))
+        with pull_stream_lock:
+            pull_stream_configs['legacy'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            data = client.get('/api/streamux/legacy/log').get_json()
+            assert data['lines'] == ['old-tail']
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('legacy', None)
+
+    def test_log_empty_when_missing_file(self, client, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
+        with pull_stream_lock:
+            pull_stream_configs['empty'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            response = client.get('/api/streamux/empty/log')
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['name'] == 'empty'
+            assert data['lines'] == []
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('empty', None)
+
+    def test_log_empty_file_200(self, client, tmp_path, monkeypatch):
+        """0-byte log file is 200 + lines [], not 404 (UI would stick on empty)."""
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        logdir = tmp_path / 'ffmpeg'
+        logdir.mkdir()
+        (logdir / 'streamux-quiet.log').write_text('', encoding='utf-8')
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(logdir))
+        with pull_stream_lock:
+            pull_stream_configs['quiet'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            response = client.get('/api/streamux/quiet/log')
+            assert response.status_code == 200
+            assert response.get_json()['lines'] == []
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('quiet', None)
+
+    def test_open_encoder_log_appends(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
+        path = tmp_path / 'ffmpeg' / 'streamux-traffic_loop.log'
+        first = sx._open_encoder_log('traffic_loop')
+        first.write('spawn-1\n')
+        first.close()
+        second = sx._open_encoder_log('traffic_loop')
+        second.write('spawn-2\n')
+        second.close()
+        assert path.read_text(encoding='utf-8') == 'spawn-1\nspawn-2\n'
+
+    def test_open_encoder_log_rotates_when_huge(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
+        monkeypatch.setattr(sx, 'ENCODER_LOG_MAX_BYTES', 64)
+        path = tmp_path / 'ffmpeg' / 'streamux-unit.log'
+        path.parent.mkdir()
+        path.write_text('keep-me\n' + ('x' * 200) + '\n', encoding='utf-8')
+        fh = sx._open_encoder_log('unit')
+        fh.write('after\n')
+        fh.close()
+        text = path.read_text(encoding='utf-8')
+        assert 'keep-me' in text
+        assert 'log rotated' in text
+        assert 'after' in text
+        assert len(text) < 400
+
+    def test_encoder_log_file_no_traverse(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        logdir = tmp_path / 'ffmpeg'
+        logdir.mkdir()
+        (tmp_path / 'secret.log').write_text('pwned\n', encoding='utf-8')
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(logdir))
+        assert sx.encoder_log_file('../secret') is None
+        assert sx.encoder_log_file('..\\secret') is None
+        (logdir / 'streamux-foot_traffic.log').write_text('ok\n', encoding='utf-8')
+        path = sx.encoder_log_file('foot_traffic')
+        assert path
+        assert os.path.basename(path) == 'streamux-foot_traffic.log'
+        assert os.path.realpath(path).startswith(os.path.realpath(str(logdir)))
+
+    def test_put_missing_pull(self, client):
+        response = client.put('/api/streamux/missing', json={'profile': 'medium'})
+        assert response.status_code == 404
+
+    def test_put_rejects_rung_field(self, client):
+        from app.state import pull_stream_configs, pull_stream_lock
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            response = client.put('/api/streamux/unit', json={'rung': 'low'})
+            assert response.status_code == 400
+            err = (response.get_json() or {}).get('error', '')
+            assert 'profile' in err
+            assert 'rung' not in err.lower()
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
+
+    def test_normalize_profile_aliases(self):
+        from app.services.streamux import DEFAULT_PROFILE, PROFILES, normalize_profile
+        assert DEFAULT_PROFILE == 'medium'
+        assert normalize_profile('floor') == 'low'
+        assert normalize_profile('mid') == 'medium'
+        assert normalize_profile('g2g') == 'high'
+        assert set(PROFILES) == {'low', 'medium', 'high'}
+
+    def test_migrate_legacy_profiles_file(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        old = tmp_path / 'overview_rungs.json'
+        new = tmp_path / 'streamux_profiles.json'
+        old.write_text(json.dumps({'foot_traffic': 'floor'}), encoding='utf-8')
+        monkeypatch.setattr(sx, 'DATA_DIR', str(tmp_path))
+        monkeypatch.setattr(sx, 'STATE_FILE', str(new))
+        monkeypatch.setattr(sx, 'LEGACY_STATE_FILE', str(old))
+        monkeypatch.setattr(sx, 'OVERLAY_STATE_FILE', str(tmp_path / 'streamux_overlay.json'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        mgr = sx.StreamuxManager()
+        assert mgr.get_profile('foot_traffic') == 'low'
+        assert new.is_file()
+        saved = json.loads(new.read_text(encoding='utf-8'))
+        assert saved == {'foot_traffic': {'profile': 'low', 'encoding': True}}
+        assert mgr.get_encoding('foot_traffic') is True
+
+    def test_load_encoding_false_and_missing_defaults_on(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        state = tmp_path / 'streamux_profiles.json'
+        state.write_text(json.dumps({
+            'MOHOC': {'profile': 'medium', 'encoding': False},
+            'traffic_loop': {'profile': 'medium'},
+            'foot_traffic': 'low',
+        }), encoding='utf-8')
+        monkeypatch.setattr(sx, 'DATA_DIR', str(tmp_path))
+        monkeypatch.setattr(sx, 'STATE_FILE', str(state))
+        monkeypatch.setattr(sx, 'LEGACY_STATE_FILE', str(tmp_path / 'overview_rungs.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_STATE_FILE', str(tmp_path / 'streamux_overlay.json'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        mgr = sx.StreamuxManager()
+        assert mgr.get_encoding('MOHOC') is False
+        assert mgr.get_encoding('traffic_loop') is True
+        assert mgr.get_encoding('foot_traffic') is True
+        assert mgr.get_encoding('never_seen') is True
+        saved = json.loads(state.read_text(encoding='utf-8'))
+        assert saved['MOHOC'] == {'profile': 'medium', 'encoding': False}
+        assert saved['traffic_loop']['encoding'] is True
+        assert saved['foot_traffic'] == {'profile': 'low', 'encoding': True}
+
+    def test_passthrough_cmd_is_copy_not_x264(self):
+        from app.services.streamux import streamux_manager, source_name
+        cmd = streamux_manager._build_passthrough_cmd('MOHOC')
+        joined = ' '.join(cmd)
+        assert 'libx264' not in cmd
+        assert '-c' in cmd
+        assert 'copy' in cmd
+        assert 'publish:MOHOC' in joined
+        assert 'publish:MOHOC__src' not in joined
+        assert source_name('MOHOC') in joined
+
+    def test_put_encoding_off_passthrough_and_409s(self, client, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        monkeypatch.setattr(sx.streamux_manager, '_restart', lambda *a, **k: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save', lambda: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save_overlays', lambda: None)
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            sx.streamux_manager._profiles['unit'] = 'medium'
+            sx.streamux_manager._encoding.pop('unit', None)
+            res = client.put('/api/streamux/unit', json={'encoding': False})
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data['encoding'] is False
+            assert data['mode'] == 'passthrough'
+            assert sx.streamux_manager.get_encoding('unit') is False
+            restart = client.post('/api/streamux/restart', json={'name': 'unit'})
+            assert restart.status_code == 409
+            err = (restart.get_json() or {}).get('error', '').lower()
+            assert 'encoding is off' in err
+            prof = client.put('/api/streamux/unit', json={'profile': 'low'})
+            assert prof.status_code == 409
+            assert 'encoding on' in (prof.get_json() or {}).get('error', '').lower()
+            on = client.put('/api/streamux/unit', json={'encoding': True, 'profile': 'low'})
+            assert on.status_code == 200
+            body = on.get_json()
+            assert body['encoding'] is True
+            assert body['mode'] == 'encode'
+            assert body['profile'] == 'low'
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
+            sx.streamux_manager._profiles.pop('unit', None)
+            sx.streamux_manager._encoding.pop('unit', None)
+            sx.streamux_manager._errors.pop('unit', None)
+
+    def test_spawn_passthrough_when_encoding_off(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        monkeypatch.setattr(sx, 'DATA_DIR', str(tmp_path))
+        monkeypatch.setattr(sx, 'STATE_FILE', str(tmp_path / 'streamux_profiles.json'))
+        monkeypatch.setattr(sx, 'LEGACY_STATE_FILE', str(tmp_path / 'overview_rungs.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_STATE_FILE', str(tmp_path / 'streamux_overlay.json'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
+        mgr = sx.StreamuxManager()
+        mgr._encoding['cam'] = False
+        mgr._profiles['cam'] = 'medium'
+        captured = {}
+
+        class FakeProc:
+            pid = 99
+            stdout = None
+
+            def poll(self):
+                return None
+
+        def fake_popen(cmd, **kwargs):
+            captured['cmd'] = cmd
+            return FakeProc()
+
+        monkeypatch.setattr(sx.subprocess, 'Popen', fake_popen)
+        monkeypatch.setattr(sx.mediamtx, 'add_path', lambda *a, **k: True)
+        monkeypatch.setattr(mgr, '_watch', lambda *a, **k: None)
+        mgr._spawn('cam')
+        cmd = captured['cmd']
+        assert 'libx264' not in cmd
+        assert 'copy' in cmd
+        assert any(isinstance(x, str) and x.endswith('publish:cam') for x in cmd)
+        assert not any(isinstance(x, str) and 'publish:cam__src' in x for x in cmd)
+
+    def _patch_streamux_files(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        monkeypatch.setattr(sx, 'DATA_DIR', str(tmp_path))
+        monkeypatch.setattr(sx, 'STATE_FILE', str(tmp_path / 'streamux_profiles.json'))
+        monkeypatch.setattr(sx, 'LEGACY_STATE_FILE', str(tmp_path / 'overview_rungs.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_STATE_FILE', str(tmp_path / 'streamux_overlay.json'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
+        monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
+        monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
+        return sx
+
+    def test_overlay_put_while_encoding_off_does_not_restart(self, client, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        restarts = []
+        monkeypatch.setattr(sx.streamux_manager, '_restart', lambda n: restarts.append(n))
+        monkeypatch.setattr(sx.streamux_manager, '_save', lambda: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save_overlays', lambda: None)
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *a, **k: {'ready': True})
+
+        class Alive:
+            def poll(self):
+                return None
+
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            sx.streamux_manager._profiles['unit'] = 'high'
+            sx.streamux_manager._encoding['unit'] = False
+            sx.streamux_manager._overlays['unit'] = False
+            sx.streamux_manager._procs['unit'] = Alive()
+            res = client.put('/api/streamux/unit', json={'overlay': True})
+            assert res.status_code == 200
+            body = res.get_json()
+            assert body['encoding'] is False
+            assert body['mode'] == 'passthrough'
+            assert body['overlay'] is True
+            assert sx.streamux_manager.get_encoding('unit') is False
+            assert restarts == []
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
+            sx.streamux_manager._profiles.pop('unit', None)
+            sx.streamux_manager._encoding.pop('unit', None)
+            sx.streamux_manager._overlays.pop('unit', None)
+            sx.streamux_manager._procs.pop('unit', None)
+            sx.streamux_manager._errors.pop('unit', None)
+
+    def test_watch_does_not_respawn_encode_after_encoding_off(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        self._patch_streamux_files(tmp_path, monkeypatch)
+        mgr = sx.StreamuxManager()
+        mgr._encoding['cam'] = True
+        mgr._profiles['cam'] = 'high'
+        mgr._generations['cam'] = 1
+        ensured = []
+
+        def fake_ensure(name, gen=None):
+            ensured.append((name, gen, mgr.get_encoding(name)))
+
+        monkeypatch.setattr(mgr, '_ensure', fake_ensure)
+        monkeypatch.setattr(sx.time, 'sleep', lambda _s: mgr._encoding.__setitem__('cam', False))
+
+        class DeadProc:
+            def wait(self):
+                return 1
+
+            def poll(self):
+                return 1
+
+        proc = DeadProc()
+        mgr._procs['cam'] = proc
+        mgr._watch('cam', proc, 'high', mode='encode', gen=1)
+        assert ensured == []
+        assert mgr.get_encoding('cam') is False
+
+    def test_watch_stale_generation_does_not_retry(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        self._patch_streamux_files(tmp_path, monkeypatch)
+        mgr = sx.StreamuxManager()
+        mgr._encoding['cam'] = True
+        mgr._profiles['cam'] = 'high'
+        mgr._generations['cam'] = 2
+        ensured = []
+        monkeypatch.setattr(mgr, '_ensure', lambda *a, **k: ensured.append(1))
+        monkeypatch.setattr(sx.time, 'sleep', lambda _s: None)
+
+        class DeadProc:
+            def wait(self):
+                return 1
+
+            def poll(self):
+                return 1
+
+        proc = DeadProc()
+        mgr._procs['cam'] = proc
+        mgr._watch('cam', proc, 'high', mode='encode', gen=1)
+        assert ensured == []
+
+    def test_spawn_skips_x264_if_encoding_flips_off(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        self._patch_streamux_files(tmp_path, monkeypatch)
+        mgr = sx.StreamuxManager()
+        mgr._encoding['cam'] = True
+        mgr._profiles['cam'] = 'high'
+        mgr._overlays['cam'] = True
+        mgr._generations['cam'] = 5
+        orig_n = {'n': 0}
+
+        def get_enc(name):
+            orig_n['n'] += 1
+            return orig_n['n'] == 1
+
+        monkeypatch.setattr(mgr, 'get_encoding', get_enc)
+        monkeypatch.setattr(mgr, 'get_overlay', lambda n: True)
+        monkeypatch.setattr(sx, 'find_font', lambda: '/tmp/fake.ttf')
+        monkeypatch.setattr(mgr, '_seed_overlay_text', lambda *a, **k: None)
+        monkeypatch.setattr(mgr, '_build_cmd', lambda *a, **k: ['ffmpeg', 'ENCODE'])
+        captured = []
+        monkeypatch.setattr(sx.subprocess, 'Popen', lambda *a, **k: captured.append(a) or None)
+        mgr._spawn('cam', expected=5)
+        assert captured == []
+
+    def test_hw_api_schema(self, client):
+        response = client.get('/api/streamux/hw')
+        assert response.status_code == 200
+        data = response.get_json()
+        assert 'scope' in data
+        assert 'cpu' in data
+        assert 'memory' in data
+        assert 'disk' in data
+        assert 'temp' in data
+        assert 'uptime' in data
+        assert data.get('top_cpu') == []
+        assert data.get('top_ram') == []
+        assert 'rung' not in data
+        assert data['scope']['processes'] in ('container', 'host', 'unavailable')
+        assert 'celsius' in (data.get('temp') or {})
+
+    def test_hw_api_procs_query(self, client, tmp_path, monkeypatch):
+        import app.services.hoststats as hs
+        from app.api import streamux as api
+        root = _write_fake_proc(tmp_path)
+        reader = hs.HostStats(
+            proc_root=str(root),
+            host_proc_candidates=(),
+            disk_path=str(tmp_path),
+            sys_root=str(tmp_path / 'nosys'),
+            clk_tck=100,
+            page_size=4096,
+        )
+        monkeypatch.setattr(api, 'read_hw', lambda include_procs=False: reader.snapshot(
+            include_procs=include_procs, wait_s=0,
+        ))
+        empty = client.get('/api/streamux/hw').get_json()
+        assert empty['top_cpu'] == []
+        data = client.get('/api/streamux/hw?procs=1').get_json()
+        assert data['scope']['processes'] == 'container'
+        assert data['scope']['processes_label'] == 'this container (tvr-edge)'
+        names = [r['name'] for r in data['top_cpu']]
+        assert 'ffmpeg foot_traffic' in names
+        assert not any('rtsp://secret' in (r['name'] or '') for r in data['top_cpu'])
+
+    def test_hoststats_cpu_mem_disk_uptime(self, tmp_path):
+        import app.services.hoststats as hs
+        root = _write_fake_proc(tmp_path)
+        reader = hs.HostStats(
+            proc_root=str(root),
+            host_proc_candidates=(),
+            disk_path=str(tmp_path),
+            sys_root=str(tmp_path / 'nosys'),
+            clk_tck=100,
+            page_size=4096,
+        )
+        first = reader.snapshot(include_procs=False, wait_s=0)
+        assert first['scope']['stats'] == 'host_kernel'
+        assert first['cpu']['percent'] is None
+        assert first['cpu']['nproc'] == 4
+        assert first['cpu']['load1'] == 0.42
+        assert first['memory']['percent'] == 82.1
+        assert first['uptime']['text'] == '1d 6h 26m'
+        assert first['disk']['total_bytes']
+        assert first['temp']['celsius'] is None
+        (root / 'stat').write_text(
+            'cpu  150 0 70 880 0 0 0 0 0 0\n'
+            'cpu0 0 0 0 0 0 0 0 0 0 0\n'
+            'cpu1 0 0 0 0 0 0 0 0 0 0\n'
+            'cpu2 0 0 0 0 0 0 0 0 0 0\n'
+            'cpu3 0 0 0 0 0 0 0 0 0 0\n',
+            encoding='utf-8',
+        )
+        second = reader.snapshot(include_procs=False, wait_s=0)
+        assert second['cpu']['percent'] == 70.0
+
+    def test_hoststats_host_proc_scope(self, tmp_path):
+        import app.services.hoststats as hs
+        stats = _write_fake_proc(tmp_path / 'stats')
+        host = _write_fake_proc(tmp_path / 'host')
+        reader = hs.HostStats(
+            proc_root=str(stats),
+            host_proc_candidates=(str(host),),
+            disk_path=str(tmp_path),
+            sys_root=str(tmp_path / 'nosys'),
+            clk_tck=100,
+            page_size=4096,
+        )
+        data = reader.snapshot(include_procs=True, wait_s=0)
+        assert data['scope']['processes'] == 'host'
+        assert data['scope']['host_proc_mounted'] is True
+        assert data['scope']['stats'] == 'host_kernel'
+
+    def test_hoststats_cpu_thermal(self, tmp_path):
+        import app.services.hoststats as hs
+        root = _write_fake_proc(tmp_path / 'proc')
+        sys_root = _write_fake_thermal(tmp_path / 'sys', [
+            ('thermal_zone1', 'gpu-thermal', 41000),
+            ('thermal_zone0', 'cpu-thermal', 72150),
+        ])
+        (Path(sys_root) / 'class' / 'thermal' / 'cooling_device0').mkdir()
+        reader = hs.HostStats(
+            proc_root=str(root),
+            host_proc_candidates=(),
+            disk_path=str(tmp_path),
+            sys_root=str(sys_root),
+            clk_tck=100,
+            page_size=4096,
+        )
+        data = reader.snapshot(include_procs=False, wait_s=0)
+        assert data['temp']['celsius'] == 72.2
+        assert data['temp']['type'] == 'cpu-thermal'
+
     def test_static_css_loads(self, client):
         """Test that CSS file loads successfully"""
         response = client.get('/static/styles.css')

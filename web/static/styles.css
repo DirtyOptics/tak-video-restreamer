@@ -190,6 +190,8 @@ header h1 {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
+    width: max-content; /* chip hugs title; do not span the card */
+    max-width: 100%;
 }
 
 /* Layout Components */
@@ -366,6 +368,14 @@ header h1 {
 .stream-status.reconnecting {
     color: #f59e0b;
     animation: reconnectingPulse 1.5s ease-in-out infinite;
+}
+
+.stream-status.stopped {
+    color: #94a3b8;
+}
+
+.status-dot.stopped {
+    background: #94a3b8;
 }
 
 @keyframes reconnectingPulse {
@@ -2013,37 +2023,140 @@ header h1 {
     line-height: 1.4;
 }
 
-/* ATAK overview ladder (not ABR HLS) */
-.overview-lead {
+/* StreamUx profiles (not ABR HLS) */
+.streamux-lead {
     color: var(--text-secondary);
     line-height: 1.55;
     width: 100%;
     max-width: none;
     margin: 0;
 }
-.overview-lead.muted { color: var(--text-muted); font-size: 0.9rem; }
-.overview-stream {
+.streamux-lead.muted { color: var(--text-muted); font-size: 0.9rem; }
+.streamux-stream {
     border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 1rem 1.1rem;
     margin-top: 1rem;
 }
-.overview-stream-head {
+.streamux-stream-head {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
     gap: 1rem;
     flex-wrap: wrap;
     margin-bottom: 0.75rem;
 }
-.overview-stream-head h3 { margin: 0; }
-.overview-meta { color: var(--text-muted); font-size: 0.85rem; }
-.rung-bar {
+.streamux-stream-head h3 { margin: 0; }
+.streamux-meta {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+.streamux-meta .st {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.28rem 0.65rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--secondary-bg);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.streamux-meta .st-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex: 0 0 auto;
+}
+.streamux-meta .st.ok .st-dot { background: var(--accent-success); }
+.streamux-meta .st.wait {
+    color: var(--accent-warning);
+    border-color: rgba(245, 158, 11, 0.45);
+}
+.streamux-meta .st.bad {
+    color: var(--accent-danger);
+    border-color: rgba(239, 68, 68, 0.45);
+}
+.streamux-meta .st.bad .st-dot { background: var(--accent-danger); }
+.streamux-meta .st.stop {
+    color: var(--text-muted);
+    border-color: rgba(148, 163, 184, 0.45);
+}
+.streamux-meta .st.stop .st-dot { background: #94a3b8; }
+.streamux-meta .st.pass {
+    color: #fff7ed;
+    background: #c2410c;
+    border-color: #fb923c;
+    font-weight: 600;
+}
+.streamux-meta .st.pass .st-dot { background: #fdba74; }
+.streamux-meta .st-encoding {
+    cursor: pointer;
+    user-select: none;
+}
+.streamux-meta .st-encoding.ok {
+    border-color: rgba(16, 185, 129, 0.55);
+}
+.streamux-meta .st-encoding input {
+    margin: 0;
+    width: 0.85rem;
+    height: 0.85rem;
+    accent-color: var(--accent-success);
+    flex: 0 0 auto;
+}
+.streamux-meta .st-encoding.pass input {
+    accent-color: #fb923c;
+}
+.streamux-meta .st-encoding:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.streamux-stream.stopped { border-color: #64748b; }
+.streamux-stream.encoding-off { border-color: rgba(234, 88, 12, 0.75); }
+.profile-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.profile-btn.active:disabled {
+    opacity: 1;
+    cursor: not-allowed;
+}
+.streamux-spin {
+    width: 0.7rem;
+    height: 0.7rem;
+    border: 2px solid rgba(234, 179, 8, 0.25);
+    border-top-color: #eab308;
+    border-radius: 50%;
+    animation: streamux-spin 0.7s linear infinite;
+    flex: 0 0 auto;
+}
+@keyframes streamux-spin {
+    to { transform: rotate(360deg); }
+}
+.streamux-restart-link {
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.75rem;
+    background: transparent;
+    color: #f87171;
+    border: 1px solid #f87171;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.streamux-restart-link:hover { background: rgba(248, 113, 113, 0.15); }
+.streamux-stream.stuck { border-color: #b91c1c; }
+.profile-bar {
     display: flex;
     gap: 0.6rem;
     flex-wrap: wrap;
 }
-.rung-btn {
+.profile-btn {
     flex: 1 1 10rem;
     display: flex;
     flex-direction: column;
@@ -2057,15 +2170,20 @@ header h1 {
     cursor: pointer;
     text-align: left;
 }
-.rung-btn:hover { border-color: var(--accent-primary, #5ec8e8); }
-.rung-btn.active {
+.profile-btn:hover { border-color: var(--accent-primary, #5ec8e8); }
+.profile-btn.active {
     background: linear-gradient(135deg, #0e7490 0%, #155e75 100%);
     color: #fff;
     border-color: #0e7490;
 }
-.rung-label { font-weight: 700; font-size: 0.95rem; }
-.rung-budget { font-size: 0.75rem; opacity: 0.85; }
-.overview-overlay {
+.streamux-stream.encoding-off .profile-btn.active {
+    background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+    color: #fff;
+    border-color: #ea580c;
+}
+.profile-label { font-weight: 700; font-size: 0.95rem; }
+.profile-budget { font-size: 0.75rem; opacity: 0.85; }
+.streamux-overlay {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -2073,20 +2191,151 @@ header h1 {
     font-size: 0.9rem;
     cursor: pointer;
 }
-.overview-overlay input { margin: 0; }
-.overview-overlay-hint {
+.streamux-overlay input { margin: 0; }
+.streamux-stream.encoding-off .streamux-overlay,
+.streamux-stream.stopped .streamux-overlay {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.streamux-overlay-hint {
     margin: 0.35rem 0 0;
     font-size: 0.8rem;
     color: var(--text-muted);
     line-height: 1.4;
 }
-.overview-urls {
+.streamux-last-error {
+    margin: 0.65rem 0 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: #fecaca;
+    background: #3f1d1d;
+    border: 1px solid #b91c1c;
+    border-radius: 6px;
+    padding: 0.5rem 0.7rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.streamux-stream.stuck .streamux-last-error {
+    border-color: #ef4444;
+}
+.streamux-log-box {
+    margin-top: 0.85rem;
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.streamux-log-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 0.75rem;
+    padding: 0.7rem 0.9rem;
+    background: transparent;
+    border: 0;
+    color: #e5e7eb;
+    cursor: pointer;
+    text-align: left;
+}
+.streamux-log-head:hover { background: rgba(255, 255, 255, 0.03); }
+.streamux-log-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #e5e7eb;
+}
+.streamux-log-caret {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #9ca3af;
+    flex: 0 0 auto;
+    transition: transform 0.15s ease;
+}
+.streamux-log-box.open .streamux-log-caret {
+    transform: rotate(180deg);
+    border-top-color: #d1d5db;
+}
+.streamux-log-body {
+    padding: 0 0.75rem 0.75rem;
+}
+.streamux-log-box:not(.open) .streamux-log-body {
+    display: none;
+}
+.streamux-log-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    margin-bottom: 0.55rem;
+}
+.streamux-log-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: #d1d5db;
+    cursor: pointer;
+    user-select: none;
+}
+.streamux-log-check input {
+    margin: 0;
+    accent-color: var(--accent-primary);
+    width: 0.95rem;
+    height: 0.95rem;
+}
+.streamux-log-copy {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.28rem 0.65rem;
+    font-size: 0.8rem;
+    color: #e5e7eb;
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.streamux-log-copy:hover { background: #374151; }
+.streamux-log-view,
+.streamux-log-box pre,
+pre.streamux-log-view {
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 13.5rem;
+    max-height: 17.5rem;
+    overflow-x: auto;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    background: #000;
+    color: #d1d5db;
+    padding: 0.65rem 0.7rem;
+    border-radius: 4px;
+    border: 1px solid #111;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.streamux-log-view::-webkit-scrollbar { width: 8px; }
+.streamux-log-view::-webkit-scrollbar-track { background: #0a0a0a; }
+.streamux-log-view::-webkit-scrollbar-thumb {
+    background: #9ca3af;
+    border-radius: 4px;
+}
+.streamux-urls {
     margin: 0.85rem 0 0;
     font-size: 0.85rem;
     color: var(--text-secondary);
     line-height: 1.6;
 }
-.overview-toast {
+.streamux-toast {
     position: fixed;
     bottom: 1.25rem;
     right: 1.25rem;
@@ -2096,11 +2345,12 @@ header h1 {
     color: #fff;
     z-index: 50;
 }
-.overview-toast.ok { background: #059669; }
-.overview-toast.err { background: #b91c1c; }
+.streamux-toast.ok { background: #059669; }
+.streamux-toast.err { background: #b91c1c; }
+.streamux-toast.info { background: #334155; }
 
-.overview-stream.down { border-color: #b91c1c; }
-.overview-alert {
+.streamux-stream.down { border-color: #b91c1c; }
+.streamux-alert {
     background: #3f1d1d;
     border: 1px solid #b91c1c;
     color: #fecaca;
@@ -2112,15 +2362,106 @@ header h1 {
     align-items: flex-start;
     gap: 0.5rem;
 }
-.overview-log {
-    margin: 0;
+
+/* StreamUx section-header (Profiles + Hardware Monitor): chip h2, Refresh stays right */
+.card .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.card .section-header h2 {
+    margin: 0; /* gap is on .section-header, not extra h2 margin */
+    flex: 0 0 auto;
+    width: max-content;
+    align-self: flex-start;
+}
+
+/* StreamUx Hardware Monitor */
+#streamux-hw .section-header {
+    margin-bottom: 1rem; /* banner → CPU tiles */
+}
+.streamux-hw-tiles {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+.streamux-hw-tile {
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+}
+.streamux-hw-label {
+    color: #5ec8e8;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.streamux-hw-value {
+    font-family: var(--font-mono);
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.2;
+    margin: 0.2rem 0 0.15rem;
+}
+.streamux-hw-detail {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+.streamux-hw-detail:empty,
+.streamux-hw-detail[hidden] {
+    display: none;
+}
+.streamux-hw-card .streamux-log-box {
+    margin-top: 0.95rem;
+}
+.streamux-hw-procs-note {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+    flex: 1 1 12rem;
+}
+.streamux-hw-table-title {
+    color: #5ec8e8;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin: 0.35rem 0 0.35rem;
+}
+.streamux-hw-table {
     width: 100%;
-    max-height: 8rem;
-    overflow: auto;
-    font-size: 0.75rem;
-    background: #1a1a1a;
-    padding: 0.5rem;
-    border-radius: 4px;
-    white-space: pre-wrap;
-    color: #e5e7eb;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    margin: 0 0 0.85rem;
+}
+.streamux-hw-table th {
+    color: #5ec8e8;
+    text-align: left;
+    font-weight: 600;
+    padding: 0.22rem 0.4rem;
+    border-bottom: 1px solid #1f2937;
+}
+.streamux-hw-table td {
+    color: var(--text-secondary);
+    padding: 0.22rem 0.4rem;
+    border-bottom: 1px solid #111827;
+}
+.streamux-hw-table .num {
+    text-align: right;
+    color: #86efac;
+    white-space: nowrap;
+}
+.streamux-hw-table td.num:nth-child(n+3) {
+    color: var(--text-secondary);
+}
+@media (max-width: 1100px) {
+    .streamux-hw-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 800px) {
+    .streamux-hw-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

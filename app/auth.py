@@ -22,8 +22,8 @@ import logging
 import functools
 from datetime import datetime, timezone
 
-from flask import request, jsonify, redirect, url_for, session
-from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
+from flask import request, jsonify, redirect, url_for
+from flask_login import LoginManager, UserMixin, current_user
 
 from app.config import DATA_DIR
 

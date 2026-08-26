@@ -12,7 +12,6 @@ Decodes STANAG 4609 packets and shows in human-readable format
 
 import sys
 import os
-import struct
 import json
 import subprocess
 import tempfile
@@ -38,7 +37,7 @@ def is_video_file(file_path):
 
 def extract_klv_from_video(video_file):
     """Extract KLV data stream from video file to temporary file"""
-    print(f"Extracting KLV from video file...")
+    print("Extracting KLV from video file...")
     
     # Create temporary file for extracted KLV
     temp_klv = tempfile.NamedTemporaryFile(delete=False, suffix='.bin')
@@ -84,7 +83,7 @@ def extract_klv_from_video(video_file):
 def read_klv_file(klv_file_path, is_temp=False):
     """Read and parse KLV packets from binary file"""
     print(f"\n{'='*70}")
-    print(f"KLV Metadata Reader".center(70))
+    print("KLV Metadata Reader".center(70))
     print(f"{'='*70}\n")
     
     if not is_temp:
@@ -152,7 +151,7 @@ def read_klv_file(klv_file_path, is_temp=False):
                 
                 offset += packet_size
                 
-            except Exception as e:
+            except Exception:
                 offset += 1
                 continue
     
@@ -225,7 +224,7 @@ def read_klv_file(klv_file_path, is_temp=False):
             if first_time and last_time:
                 duration = last_time - first_time
                 rate = (len(packets) - 1) / duration if duration > 0 else 0
-                print(f"\nTiming Information:")
+                print("\nTiming Information:")
                 print(f"  Duration: {duration:.2f} seconds")
                 print(f"  Update Rate: {rate:.2f} Hz")
                 print(f"  Avg Interval: {1000/rate:.1f} ms" if rate > 0 else "  Avg Interval: N/A")

@@ -1,5 +1,6 @@
 <!--
-Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
+StreamUx — ATAK published RTSP/SRT profiles. Not ABR HLS (see Settings).
+v=streamux-hw-temp-20260826
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -7,7 +8,7 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StreamUx — TAK Video Restreamer</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=streamux-hw-temp-20260826">
 </head>
 <body>
     <div class="container">
@@ -37,7 +38,7 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
         <main class="main-layout">
             <section class="card">
                 <h2>StreamUx</h2>
-                <p class="overview-lead">
+                <p class="streamux-lead">
                     StreamUx is all about the end users experience. Often video is sent with no consideration
                     to the medium in which it travels. When utilising low bandwidth links often this video can fail.
                     Yes we could adjust at the source, but often the reach back into the source after the fact is not ideal.
@@ -45,20 +46,89 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
                 </p>
             </section>
 
+            <section class="card streamux-hw-card" id="streamux-hw">
+                <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                    <h2 style="margin:0;">Hardware Monitor</h2>
+                </div>
+                <div class="streamux-hw-tiles">
+                    <div class="streamux-hw-tile">
+                        <div class="streamux-hw-label">CPU</div>
+                        <div class="streamux-hw-value" id="streamux-hw-cpu">—</div>
+                        <div class="streamux-hw-detail" id="streamux-hw-cpu-d"></div>
+                    </div>
+                    <div class="streamux-hw-tile">
+                        <div class="streamux-hw-label">Memory</div>
+                        <div class="streamux-hw-value" id="streamux-hw-mem">—</div>
+                        <div class="streamux-hw-detail" id="streamux-hw-mem-d"></div>
+                    </div>
+                    <div class="streamux-hw-tile">
+                        <div class="streamux-hw-label">Disk</div>
+                        <div class="streamux-hw-value" id="streamux-hw-disk">—</div>
+                        <div class="streamux-hw-detail" id="streamux-hw-disk-d"></div>
+                    </div>
+                    <div class="streamux-hw-tile">
+                        <div class="streamux-hw-label">Temp</div>
+                        <div class="streamux-hw-value" id="streamux-hw-temp">—</div>
+                        <div class="streamux-hw-detail" id="streamux-hw-temp-d"></div>
+                    </div>
+                    <div class="streamux-hw-tile">
+                        <div class="streamux-hw-label">Uptime</div>
+                        <div class="streamux-hw-value" id="streamux-hw-up">—</div>
+                        <div class="streamux-hw-detail" id="streamux-hw-up-d" hidden></div>
+                    </div>
+                </div>
+                <div class="streamux-log-box" id="streamux-hw-procs-box">
+                    <button type="button" class="streamux-log-head" id="streamux-hw-procs-toggle" aria-expanded="false">
+                        <span class="streamux-log-title">What's using CPU/RAM?</span>
+                        <span class="streamux-log-caret" aria-hidden="true"></span>
+                    </button>
+                    <div class="streamux-log-body" id="streamux-hw-procs-body" hidden>
+                        <div class="streamux-log-toolbar">
+                            <span class="streamux-hw-procs-note" id="streamux-hw-procs-note"></span>
+                            <button type="button" class="streamux-log-copy" id="streamux-hw-procs-refresh">Refresh</button>
+                        </div>
+                        <h3 class="streamux-hw-table-title" id="streamux-hw-cpu-title">Top by CPU</h3>
+                        <table class="streamux-hw-table">
+                            <thead>
+                                <tr>
+                                    <th>Process</th>
+                                    <th class="num">CPU % (sys)</th>
+                                    <th class="num">RAM %</th>
+                                    <th class="num">RAM</th>
+                                </tr>
+                            </thead>
+                            <tbody id="streamux-hw-top-cpu"></tbody>
+                        </table>
+                        <h3 class="streamux-hw-table-title">Top by RAM</h3>
+                        <table class="streamux-hw-table">
+                            <thead>
+                                <tr>
+                                    <th>Process</th>
+                                    <th class="num">RAM %</th>
+                                    <th class="num">RAM</th>
+                                    <th class="num">CPU % (sys)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="streamux-hw-top-ram"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <section class="card">
                 <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
-                    <h2 style="margin:0;">Pull streams</h2>
-                    <button class="btn btn-small btn-secondary" id="overview-refresh">Refresh</button>
+                    <h2 style="margin:0;">Profiles</h2>
+                    <button class="btn btn-small btn-secondary" id="streamux-refresh">Refresh</button>
                 </div>
-                <div id="overview-empty" class="empty-state" style="display:none;">
-                    <p>No pull streams. Add a Pull on the Dashboard (e.g. Frigate <code>yt_loop3</code>), then set the ATAK rung here.</p>
+                <div id="streamux-empty" class="empty-state" style="display:none;">
+                    <p>No pull streams. Add a Pull on the Dashboard first, then set the profile here.</p>
                 </div>
-                <div id="overview-list"></div>
+                <div id="streamux-list"></div>
             </section>
         </main>
     </div>
 
-    <div id="overview-toast" class="overview-toast" hidden></div>
+    <div id="streamux-toast" class="streamux-toast" hidden></div>
 
     <script>
         const logoutLink = document.getElementById('logout-link');
@@ -67,15 +137,595 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
             fetch('/api/auth/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
         });
 
-        const listEl = document.getElementById('overview-list');
-        const emptyEl = document.getElementById('overview-empty');
-        const toastEl = document.getElementById('overview-toast');
+        const listEl = document.getElementById('streamux-list');
+        const emptyEl = document.getElementById('streamux-empty');
+        const toastEl = document.getElementById('streamux-toast');
         let catalog = [];
+        let lastStreams = [];
+        const pending = {};
+        const encodingHold = {};
+        const sawDown = new Set();
+        const logState = {};
+        const logPollers = {};
+        const STUCK_MS = 18000;
+        const LOG_POLL_MS = 2000;
+        const HW_POLL_MS = 3000;
+        const ENC_OFF_NOTE = 'Turn encoding on to change profile. Viewers keep a copy of the source. Picture may pause a few seconds while ffmpeg switches.';
+        const PASS_LABEL = 'Passthrough';
+        const PASS_BUDGET = 'source copy';
+        const ERR_RE = /error|warn(?:ing)?|\beof\b|dts discontinuity|i\/o error|404/i;
+        let pollTimer = null;
+        let hwTimer = null;
+        let hwOpen = false;
+        let hwSeq = 0;
+        let lastHwSig = '';
+        let lastHwCpuSig = '';
+        let lastHwRamSig = '';
+        let toldStopped = false;
+        let loadSeq = 0;
 
-        function toast(msg, ok) {
+        function markPending(name) {
+            pending[name] = Date.now();
+            schedulePoll();
+            paint();
+        }
+
+        function isPending(name) {
+            const t = pending[name];
+            return Boolean(t) && (Date.now() - t) < STUCK_MS;
+        }
+
+        function schedulePoll() {
+            const fast = Object.keys(pending).some((n) => isPending(n));
+            clearInterval(pollTimer);
+            pollTimer = setInterval(loadStreamux, fast ? 1000 : 4000);
+        }
+
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const next = (value == null || value === '') ? '—' : String(value);
+            if (el.textContent !== next) el.textContent = next;
+        }
+
+        function setDetail(id, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const raw = (value == null) ? '' : String(value).trim();
+            const show = raw && raw !== '—' && raw !== '-';
+            const next = show ? raw : '';
+            if (el.textContent !== next) el.textContent = next;
+            el.hidden = !show;
+        }
+
+        function fmtPct(n) {
+            if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
+            return Number(n).toFixed(1) + '%';
+        }
+
+        function fmtTemp(n) {
+            if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
+            return Number(n).toFixed(1) + '°C';
+        }
+
+        function tempFooter(t) {
+            const s = String(t || '').toLowerCase();
+            if (s.includes('cpu') || s.includes('soc') || s.includes('pkg')) return 'CPU';
+            return t || '';
+        }
+
+        function fmtRam(bytes) {
+            if (bytes == null) return '—';
+            const gb = Number(bytes) / (1024 ** 3);
+            if (gb >= 0.1) return gb.toFixed(1) + 'GB';
+            const mb = Number(bytes) / (1024 ** 2);
+            return Math.round(mb) + 'MB';
+        }
+
+        function hwRowHtml(r, order) {
+            const name = escapeHtml(r.name || '?');
+            const cpu = fmtPct(r.cpu_percent);
+            const ramP = fmtPct(r.ram_percent);
+            const ram = fmtRam(r.ram_bytes);
+            if (order === 'ram') {
+                return `<tr><td>${name}</td><td class="num">${ramP}</td><td class="num">${ram}</td><td class="num">${cpu}</td></tr>`;
+            }
+            return `<tr><td>${name}</td><td class="num">${cpu}</td><td class="num">${ramP}</td><td class="num">${ram}</td></tr>`;
+        }
+
+        function paintHwTables(data) {
+            const cpuBody = document.getElementById('streamux-hw-top-cpu');
+            const ramBody = document.getElementById('streamux-hw-top-ram');
+            if (!cpuBody || !ramBody) return;
+            const cpuRows = Array.isArray(data.top_cpu) ? data.top_cpu : [];
+            const ramRows = Array.isArray(data.top_ram) ? data.top_ram : [];
+            const cpuSig = JSON.stringify(cpuRows);
+            const ramSig = JSON.stringify(ramRows);
+            if (cpuSig !== lastHwCpuSig) {
+                lastHwCpuSig = cpuSig;
+                cpuBody.innerHTML = cpuRows.length
+                    ? cpuRows.map((r) => hwRowHtml(r, 'cpu')).join('')
+                    : '<tr><td colspan="4">No processes yet.</td></tr>';
+            }
+            if (ramSig !== lastHwRamSig) {
+                lastHwRamSig = ramSig;
+                ramBody.innerHTML = ramRows.length
+                    ? ramRows.map((r) => hwRowHtml(r, 'ram')).join('')
+                    : '<tr><td colspan="4">No processes yet.</td></tr>';
+            }
+        }
+
+        function paintHw(data) {
+            if (!data) return;
+            const cpu = data.cpu || {};
+            const mem = data.memory || {};
+            const disk = data.disk || {};
+            const temp = data.temp || {};
+            const up = data.uptime || {};
+            setText('streamux-hw-cpu', fmtPct(cpu.percent));
+            const load = cpu.load1 == null ? '—' : Number(cpu.load1).toFixed(2);
+            const nproc = cpu.nproc ? (cpu.nproc + ' CPU' + (cpu.nproc === 1 ? '' : 's')) : '';
+            setDetail('streamux-hw-cpu-d', nproc ? ('1-min ' + load + ' · ' + nproc) : ('1-min ' + load));
+            setText('streamux-hw-mem', fmtPct(mem.percent));
+            setDetail('streamux-hw-mem-d',
+                (mem.used_bytes == null || mem.total_bytes == null)
+                    ? ''
+                    : (fmtRam(mem.used_bytes) + ' / ' + fmtRam(mem.total_bytes)));
+            setText('streamux-hw-disk', fmtPct(disk.percent));
+            setDetail('streamux-hw-disk-d',
+                (disk.used_bytes == null || disk.total_bytes == null)
+                    ? ''
+                    : (fmtRam(disk.used_bytes) + ' / ' + fmtRam(disk.total_bytes)));
+            setText('streamux-hw-temp', fmtTemp(temp.celsius));
+            setDetail('streamux-hw-temp-d', temp.celsius == null ? '' : tempFooter(temp.type));
+            setText('streamux-hw-up', up.text || '—');
+            setDetail('streamux-hw-up-d', '');
+            if (cpu.nproc) {
+                setText('streamux-hw-cpu-title', 'Top by CPU (' + cpu.nproc + ' CPUs)');
+            }
+            setText('streamux-hw-procs-note', 'ffmpeg lines are the StreamUx encoder / passthrough.');
+            if (hwOpen) paintHwTables(data);
+        }
+
+        async function loadHw(forceProcs) {
+            const wantProcs = hwOpen || forceProcs;
+            const seq = ++hwSeq;
+            try {
+                const res = await fetch('/api/streamux/hw' + (wantProcs ? '?procs=1' : ''));
+                const data = await res.json().catch(() => ({}));
+                if (seq !== hwSeq) return;
+                if (!res.ok) return;
+                const sig = JSON.stringify({
+                    c: data.cpu, m: data.memory, d: data.disk, t: data.temp, u: data.uptime, s: data.scope,
+                });
+                if (sig !== lastHwSig) {
+                    lastHwSig = sig;
+                    paintHw(data);
+                } else if (wantProcs) {
+                    paintHwTables(data);
+                    setText('streamux-hw-procs-note',
+                        'ffmpeg lines are the StreamUx encoder / passthrough.');
+                }
+            } catch (e) { /* keep last paint */ }
+        }
+
+        function toggleHwProcs() {
+            hwOpen = !hwOpen;
+            const box = document.getElementById('streamux-hw-procs-box');
+            const body = document.getElementById('streamux-hw-procs-body');
+            const head = document.getElementById('streamux-hw-procs-toggle');
+            if (box) box.classList.toggle('open', hwOpen);
+            if (body) body.hidden = !hwOpen;
+            if (head) head.setAttribute('aria-expanded', hwOpen ? 'true' : 'false');
+            if (hwOpen) loadHw(true);
+        }
+
+        function bindHw() {
+            const toggle = document.getElementById('streamux-hw-procs-toggle');
+            const refresh = document.getElementById('streamux-hw-procs-refresh');
+            if (toggle) toggle.addEventListener('click', toggleHwProcs);
+            if (refresh) refresh.addEventListener('click', () => loadHw(true));
+            loadHw(false);
+            hwTimer = setInterval(() => loadHw(false), HW_POLL_MS);
+        }
+
+        function bindListEvents() {
+            listEl.addEventListener('click', (e) => {
+                const profileBtn = e.target.closest('[data-profile]');
+                if (profileBtn && listEl.contains(profileBtn)) {
+                    if (profileBtn.classList.contains('active') || profileBtn.disabled) return;
+                    setProfile(profileBtn.dataset.name, profileBtn.dataset.profile);
+                    return;
+                }
+                const restartBtn = e.target.closest('[data-restart]');
+                if (restartBtn && listEl.contains(restartBtn)) {
+                    restartEncoder(restartBtn.dataset.restart);
+                    return;
+                }
+                const toggle = e.target.closest('[data-log-toggle]');
+                if (toggle && listEl.contains(toggle)) {
+                    toggleEncoderLog(toggle.dataset.logToggle);
+                    return;
+                }
+                const copy = e.target.closest('[data-log-copy]');
+                if (copy && listEl.contains(copy)) {
+                    copyEncoderLog(copy.dataset.logCopy);
+                }
+            });
+            listEl.addEventListener('change', (e) => {
+                const encoding = e.target.closest('[data-encoding]');
+                if (encoding && listEl.contains(encoding)) {
+                    setEncoding(encoding.dataset.encoding, encoding.checked);
+                    return;
+                }
+                const overlay = e.target.closest('[data-overlay]');
+                if (overlay && listEl.contains(overlay)) {
+                    if (overlay.disabled) return;
+                    setOverlay(overlay.dataset.overlay, overlay.checked);
+                    return;
+                }
+                const errBox = e.target.closest('[data-log-errors]');
+                if (errBox && listEl.contains(errBox)) {
+                    const ls = logStateFor(errBox.dataset.logErrors);
+                    ls.errorsOnly = errBox.checked;
+                    paintLogView(errBox.dataset.logErrors, ls.autoScroll);
+                    return;
+                }
+                const autoBox = e.target.closest('[data-log-autoscroll]');
+                if (autoBox && listEl.contains(autoBox)) {
+                    const name = autoBox.dataset.logAutoscroll;
+                    const ls = logStateFor(name);
+                    ls.autoScroll = autoBox.checked;
+                    if (ls.open && ls.autoScroll) {
+                        startLogPoll(name);
+                        const pre = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(name) + '"] .streamux-log-view');
+                        if (pre) pre.scrollTop = pre.scrollHeight;
+                    } else {
+                        stopLogPoll(name);
+                    }
+                }
+            });
+        }
+
+        function syncLogPollers() {
+            lastStreams.forEach((st) => {
+                const ls = logState[st.name];
+                if (!ls || !ls.open) {
+                    stopLogPoll(st.name);
+                    return;
+                }
+                if (ls.autoScroll) {
+                    if (!logPollers[st.name]) startLogPoll(st.name);
+                } else {
+                    stopLogPoll(st.name);
+                }
+            });
+            Object.keys(logPollers).forEach((name) => {
+                if (!lastStreams.some((s) => s.name === name)) stopLogPoll(name);
+            });
+        }
+
+        function listSignature(streams) {
+            return streams.map((s) => s.name).join('\0') + '\x1e' + catalog.map((p) => p.id).join(',');
+        }
+
+        function streamStatusBits(st) {
+            const name = st.name;
+            const stopped = !!st.stopped;
+            const encodingOn = Object.prototype.hasOwnProperty.call(encodingHold, st.name)
+                ? !!encodingHold[st.name]
+                : (st.encoding !== false);
+            const ingestOk = !!st.sourceReady;
+            const published = !!st.publishedReady;
+            const encOk = !!st.running;
+            const switching = isPending(name);
+            const stuck = !stopped && encodingOn && !published && !switching;
+            let ingestBit = `<span class="st ${ingestOk ? 'ok' : 'bad'}" title="Source pull into this box"><i class="st-dot"></i>${ingestOk ? 'ingest active' : 'ingest inactive'}</span>`;
+            let encBit;
+            if (!encodingOn) {
+                if (encOk) {
+                    encBit = '<span class="st pass" title="Published URL is a copy of ingest (no x264)"><i class="st-dot"></i>passthrough</span>';
+                } else if (switching) {
+                    encBit = '<span class="st wait" title="Switching published path"><span class="streamux-spin" aria-hidden="true"></span>passthrough&hellip;</span>';
+                } else {
+                    encBit = '<span class="st bad" title="Copy process is down; ingest may still be up"><i class="st-dot"></i>passthrough down</span>';
+                }
+            } else {
+                encBit = `<span class="st ${encOk ? 'ok' : (switching ? 'wait' : 'bad')}" title="Encoder process"><i class="st-dot"></i>${encOk ? 'ffmpeg on' : 'ffmpeg off'}</span>`;
+            }
+            let atakBit;
+            if (switching) {
+                atakBit = '<span class="st wait" title="Published URL is restarting"><span class="streamux-spin" aria-hidden="true"></span>Streaming&hellip;</span>';
+            } else if (published) {
+                atakBit = '<span class="st ok" title="Published RTSP/SRT"><i class="st-dot"></i>Streaming on</span>';
+            } else {
+                atakBit = '<span class="st bad" title="Published RTSP/SRT"><i class="st-dot"></i>Streaming off</span>';
+            }
+            if (stopped) {
+                encBit = '';
+                ingestBit = '';
+                atakBit = '<span class="st stop" title="Stopped on Dashboard. Ingest is off."><i class="st-dot"></i>Stopped</span>';
+            }
+            const restart = stuck
+                ? `<button type="button" class="streamux-restart-link" data-restart="${escapeHtml(name)}">Restart</button>`
+                : '';
+            const encTitle = encodingOn
+                ? 'Low/Med/High x264'
+                : 'passthrough copy, viewers keep RTSP/SRT';
+            const encCtrl = `<label class="st st-encoding${encodingOn ? ' ok' : ' pass'}" title="${encTitle}"><input type="checkbox" data-encoding="${escapeHtml(name)}"${encodingOn ? ' checked' : ''}${stopped ? ' disabled' : ''}> Encoding</label>`;
+            return {
+                stopped, stuck, switching, encodingOn,
+                metaHtml: `${encCtrl}${encBit}${ingestBit}${atakBit}${restart}`,
+                metaSig: [stopped, encodingOn, st.sourceReady, st.publishedReady, st.running, switching, stuck].join(','),
+            };
+        }
+
+        function updateStreamCard(st) {
+            const card = listEl.querySelector('.streamux-stream[data-stream="' + CSS.escape(st.name) + '"]');
+            if (!card) return;
+            const bits = streamStatusBits(st);
+            card.classList.toggle('stuck', bits.stuck);
+            card.classList.toggle('stopped', bits.stopped);
+            card.classList.toggle('encoding-off', !bits.encodingOn && !bits.stopped);
+            const meta = card.querySelector('.streamux-meta');
+            const holdingEnc = Object.prototype.hasOwnProperty.call(encodingHold, st.name);
+            if (meta && meta.dataset.sig !== bits.metaSig && !holdingEnc) {
+                meta.innerHTML = bits.metaHtml;
+                meta.dataset.sig = bits.metaSig;
+            }
+            card.querySelectorAll('[data-profile]').forEach((btn) => {
+                btn.classList.toggle('active', st.profile === btn.dataset.profile);
+                const lock = bits.stopped || !bits.encodingOn;
+                btn.disabled = lock;
+                const p = catalog.find((x) => x.id === btn.dataset.profile);
+                btn.title = bits.stopped
+                    ? 'Start the stream on the Dashboard first'
+                    : (!bits.encodingOn ? 'Turn encoding on to change profile' : (p ? p.budget : ''));
+                const passCopy = !bits.encodingOn && !bits.stopped && st.profile === btn.dataset.profile;
+                const labelEl = btn.querySelector('.profile-label');
+                if (labelEl) labelEl.textContent = passCopy ? PASS_LABEL : (p ? p.label : '');
+                const budgetEl = btn.querySelector('.profile-budget');
+                if (budgetEl) budgetEl.textContent = passCopy ? PASS_BUDGET : (p ? p.budget : '');
+            });
+            const encodingBox = card.querySelector('[data-encoding]');
+            if (encodingBox) {
+                if (!holdingEnc) encodingBox.checked = bits.encodingOn;
+                encodingBox.disabled = bits.stopped;
+            }
+            const overlay = card.querySelector('[data-overlay]');
+            const overlayLockTitle = bits.stopped
+                ? 'Start the stream on the Dashboard first'
+                : (!bits.encodingOn
+                    ? 'Overlay cannot burn on passthrough. Turn encoding on to show the diagnostic overlay.'
+                    : '');
+            if (overlay) {
+                overlay.checked = !!st.overlay;
+                overlay.disabled = bits.stopped || !bits.encodingOn;
+            }
+            const overlayLabel = card.querySelector('.streamux-overlay');
+            if (overlayLabel) overlayLabel.title = overlayLockTitle;
+            const overlayHint = card.querySelector('.streamux-overlay-copy');
+            if (overlayHint) overlayHint.remove();
+            let encOffP = card.querySelector('.streamux-encoding-off-note');
+            if (!bits.encodingOn && !bits.stopped) {
+                if (!encOffP) {
+                    encOffP = document.createElement('p');
+                    encOffP.className = 'streamux-overlay-hint streamux-encoding-off-note';
+                    if (overlayLabel) overlayLabel.after(encOffP);
+                }
+                encOffP.textContent = ENC_OFF_NOTE;
+            } else if (encOffP) {
+                encOffP.remove();
+            }
+            let stoppedP = card.querySelector('.streamux-stopped-note');
+            if (bits.stopped) {
+                if (!stoppedP) {
+                    stoppedP = document.createElement('p');
+                    stoppedP.className = 'streamux-overlay-hint streamux-stopped-note';
+                    stoppedP.textContent = 'Stopped on the Dashboard — ingest is off. Start it there to resume, or Delete to remove it.';
+                    if (overlayLabel) overlayLabel.after(stoppedP);
+                    else card.insertBefore(stoppedP, card.querySelector('.streamux-log-box'));
+                }
+            } else if (stoppedP) {
+                stoppedP.remove();
+            }
+            let errP = card.querySelector('.streamux-last-error');
+            if (st.lastError) {
+                if (!errP) {
+                    errP = document.createElement('p');
+                    errP.className = 'streamux-last-error';
+                    const logBox = card.querySelector('.streamux-log-box');
+                    if (logBox) logBox.before(errP);
+                    else card.appendChild(errP);
+                }
+                if (errP.textContent !== st.lastError) errP.textContent = st.lastError;
+            } else if (errP) {
+                errP.remove();
+            }
+        }
+
+        function logStateFor(name) {
+            if (!logState[name]) {
+                logState[name] = {
+                    open: false,
+                    errorsOnly: false,
+                    autoScroll: true,
+                    lines: null,
+                    lastError: '',
+                    scrollTop: 0,
+                };
+            }
+            return logState[name];
+        }
+
+        function snapshotLogPanels() {
+            lastStreams.forEach((st) => {
+                const ls = logState[st.name];
+                if (!ls) return;
+                const box = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(st.name) + '"]');
+                if (!box) return;
+                ls.open = box.classList.contains('open');
+                const err = box.querySelector('[data-log-errors]');
+                const auto = box.querySelector('[data-log-autoscroll]');
+                if (err) ls.errorsOnly = err.checked;
+                if (auto) ls.autoScroll = auto.checked;
+                const pre = box.querySelector('.streamux-log-view');
+                if (pre) ls.scrollTop = pre.scrollTop;
+            });
+        }
+
+        function displayLogText(ls) {
+            const lines = ls.lines;
+            if (lines == null) return 'Loading…';
+            if (!lines.length) return 'No encoder log yet.';
+            if (ls.errorsOnly) {
+                const filtered = lines.filter((ln) => ERR_RE.test(ln));
+                if (!filtered.length) return 'No matching lines';
+                return filtered.join('\n');
+            }
+            return lines.join('\n');
+        }
+
+        function paintLogView(name, stick) {
+            const box = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(name) + '"]');
+            if (!box) return;
+            const ls = logStateFor(name);
+            const pre = box.querySelector('.streamux-log-view');
+            if (!pre) return;
+            const next = displayLogText(ls);
+            if (pre.textContent === next) return;
+            pre.textContent = next;
+            if (stick && ls.autoScroll) {
+                pre.scrollTop = pre.scrollHeight;
+            } else if (ls.scrollTop) {
+                pre.scrollTop = ls.scrollTop;
+            }
+        }
+
+        function startLogPoll(name) {
+            stopLogPoll(name);
+            const ls = logStateFor(name);
+            if (!ls.open || !ls.autoScroll) return;
+            logPollers[name] = setInterval(() => fetchEncoderLog(name, true), LOG_POLL_MS);
+        }
+
+        function stopLogPoll(name) {
+            if (logPollers[name]) {
+                clearInterval(logPollers[name]);
+                delete logPollers[name];
+            }
+        }
+
+        function toggleEncoderLog(name) {
+            const ls = logStateFor(name);
+            ls.open = !ls.open;
+            const box = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(name) + '"]');
+            if (box) {
+                box.classList.toggle('open', ls.open);
+                const head = box.querySelector('[data-log-toggle]');
+                const body = box.querySelector('.streamux-log-body');
+                if (head) head.setAttribute('aria-expanded', ls.open ? 'true' : 'false');
+                if (body) body.hidden = !ls.open;
+            }
+            if (ls.open) {
+                fetchEncoderLog(name, false);
+                if (ls.autoScroll) startLogPoll(name);
+            } else {
+                stopLogPoll(name);
+            }
+        }
+
+        async function fetchEncoderLog(name, fromPoll) {
+            const ls = logStateFor(name);
+            if (!ls.open) return;
+            try {
+                const res = await fetch('/api/streamux/' + encodeURIComponent(name) + '/log?lines=100');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    ls.lines = [data.error || 'Could not load encoder log.'];
+                    paintLogView(name, fromPoll);
+                    return;
+                }
+                const incoming = Array.isArray(data.lines) ? data.lines : [];
+                // Keep last text if the file is briefly empty (encoder restart).
+                // "No encoder log yet" only when this session never saw a line.
+                if (incoming.length) {
+                    ls.lines = incoming;
+                } else if (ls.lines == null || !ls.lines.length) {
+                    ls.lines = [];
+                }
+                ls.lastError = data.lastError || '';
+                paintLogView(name, fromPoll || ls.autoScroll);
+            } catch (e) {
+                ls.lines = ['Could not load encoder log.'];
+                paintLogView(name, false);
+            }
+        }
+
+        async function copyEncoderLog(name) {
+            const box = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(name) + '"]');
+            const pre = box && box.querySelector('.streamux-log-view');
+            const text = pre ? pre.textContent : '';
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.left = '-9999px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    ta.remove();
+                }
+                toast('Copied encoder log', true);
+            } catch (e) {
+                toast('Copy failed', false);
+            }
+        }
+
+        function paint() {
+            snapshotLogPanels();
+            emptyEl.style.display = lastStreams.length ? 'none' : 'block';
+            const cards = [...listEl.querySelectorAll('.streamux-stream')];
+            const existingSig = cards.map((el) => el.dataset.stream || '').join('\0')
+                + '\x1e' + catalog.map((p) => p.id).join(',');
+            if (cards.length && existingSig === listSignature(lastStreams)) {
+                lastStreams.forEach(updateStreamCard);
+                syncLogPollers();
+                return;
+            }
+            if (Object.keys(encodingHold).length) {
+                lastStreams.forEach(updateStreamCard);
+                syncLogPollers();
+                return;
+            }
+            const saved = {};
+            lastStreams.forEach((st) => {
+                const pre = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(st.name) + '"] .streamux-log-view');
+                if (pre) saved[st.name] = { el: pre, text: pre.textContent, scroll: pre.scrollTop };
+            });
+            listEl.innerHTML = lastStreams.map(renderStream).join('');
+            lastStreams.forEach((st) => {
+                const keep = saved[st.name];
+                const fresh = listEl.querySelector('.streamux-log-box[data-log="' + CSS.escape(st.name) + '"] .streamux-log-view');
+                if (!keep || !fresh) return;
+                if (keep.text === fresh.textContent) {
+                    fresh.replaceWith(keep.el);
+                    keep.el.scrollTop = keep.scroll;
+                }
+            });
+            syncLogPollers();
+        }
+
+        function toast(msg, kind) {
             toastEl.hidden = false;
             toastEl.textContent = msg;
-            toastEl.className = 'overview-toast ' + (ok ? 'ok' : 'err');
+            const cls = (kind === true || kind === 'ok') ? 'ok'
+                : (kind === 'info') ? 'info' : 'err';
+            toastEl.className = 'streamux-toast ' + cls;
             setTimeout(() => { toastEl.hidden = true; }, 3500);
         }
 
@@ -89,116 +739,205 @@ Overview ladder — ATAK published RTSP/SRT rungs. Not ABR HLS (see Settings).
             return window.location.hostname || '192.168.4.50';
         }
 
-        async function loadOverview() {
-            const res = await fetch('/api/overview');
+        async function loadStreamux() {
+            const seq = ++loadSeq;
+            const res = await fetch('/api/streamux');
+            if (seq !== loadSeq) return;
             if (!res.ok) {
-                toast('Could not load overview (' + res.status + ')', false);
+                toast('Could not load StreamUx (' + res.status + ')', false);
                 return;
             }
             const data = await res.json();
-            catalog = data.rungs || [];
-            const streams = data.streams || [];
-            emptyEl.style.display = streams.length ? 'none' : 'block';
-            listEl.innerHTML = streams.map(renderStream).join('');
-            listEl.querySelectorAll('[data-rung]').forEach((btn) => {
-                btn.addEventListener('click', () => setRung(btn.dataset.name, btn.dataset.rung));
+            if (seq !== loadSeq) return;
+            catalog = data.profiles || [];
+            lastStreams = data.streams || [];
+            lastStreams.forEach((st) => {
+                if (!pending[st.name]) return;
+                if (!st.publishedReady) sawDown.add(st.name);
+                const aged = (Date.now() - pending[st.name]) > 3000;
+                if (st.publishedReady && (sawDown.has(st.name) || aged)) {
+                    delete pending[st.name];
+                    sawDown.delete(st.name);
+                }
             });
-            listEl.querySelectorAll('[data-overlay]').forEach((box) => {
-                box.addEventListener('change', () => setOverlay(box.dataset.overlay, box.checked));
-            });
-            listEl.querySelectorAll('[data-restart]').forEach((btn) => {
-                btn.addEventListener('click', () => restartEncoder(btn.dataset.restart));
-            });
+            if (!toldStopped) {
+                const stoppedNames = lastStreams.filter((s) => s.stopped).map((s) => s.name);
+                if (stoppedNames.length) {
+                    toast(stoppedNames.join(', ') + ' stopped — ingest is off. Start from Dashboard, or Delete to remove.', 'info');
+                    toldStopped = true;
+                }
+            }
+            paint();
+            schedulePoll();
         }
 
         function renderStream(st) {
             const name = st.name;
             const host = hostHint();
-            const buttons = catalog.map((r) => {
-                const active = st.rung === r.id ? ' active' : '';
-                return `<button type="button" class="rung-btn${active}" data-name="${escapeHtml(name)}" data-rung="${r.id}" title="${escapeHtml(r.budget)}">
-                    <span class="rung-label">${escapeHtml(r.label)}</span>
-                    <span class="rung-budget">${escapeHtml(r.budget)}</span>
+            const bits = streamStatusBits(st);
+            const buttons = catalog.map((p) => {
+                const active = st.profile === p.id ? ' active' : '';
+                const lock = bits.stopped || !bits.encodingOn;
+                const disabled = lock ? ' disabled' : '';
+                const title = bits.stopped
+                    ? 'Start the stream on the Dashboard first'
+                    : (!bits.encodingOn ? 'Turn encoding on to change profile' : escapeHtml(p.budget));
+                const passCopy = !bits.encodingOn && !bits.stopped && st.profile === p.id;
+                const label = passCopy ? PASS_LABEL : p.label;
+                const budget = passCopy ? PASS_BUDGET : p.budget;
+                return `<button type="button" class="profile-btn${active}" data-name="${escapeHtml(name)}" data-profile="${p.id}" title="${title}"${disabled}>
+                    <span class="profile-label">${escapeHtml(label)}</span>
+                    <span class="profile-budget">${escapeHtml(budget)}</span>
                 </button>`;
             }).join('');
-            const ingest = st.sourceReady ? 'ingest ready' : 'ingest down';
-            const published = st.publishedReady ? 'ATAK path live' : 'ATAK path down';
-            const enc = st.running ? 'ffmpeg on' : 'ffmpeg off';
-            const bad = !st.publishedReady;
-            const alert = bad ? `<div class="overview-alert">
-                <strong>${escapeHtml(published)}</strong> — VLC/ATAK will fail until the encoder is back.
-                <button type="button" class="btn btn-small" data-restart="${escapeHtml(name)}">Restart encoder</button>
-                ${st.lastError ? `<pre class="overview-log">${escapeHtml(st.lastError)}</pre>` : ''}
-            </div>` : '';
-            return `<div class="overview-stream${bad ? ' down' : ''}">
-                <div class="overview-stream-head">
+            const overlayLocked = bits.stopped || !bits.encodingOn;
+            const overlayTitle = bits.stopped
+                ? 'Start the stream on the Dashboard first'
+                : (!bits.encodingOn
+                    ? 'Overlay cannot burn on passthrough. Turn encoding on to show the diagnostic overlay.'
+                    : '');
+            const encodingOffNote = (!bits.encodingOn && !bits.stopped)
+                ? `<p class="streamux-overlay-hint streamux-encoding-off-note">${ENC_OFF_NOTE}</p>`
+                : '';
+            const stoppedNote = bits.stopped
+                ? '<p class="streamux-overlay-hint streamux-stopped-note">Stopped on the Dashboard — ingest is off. Start it there to resume, or Delete to remove it.</p>'
+                : '';
+            const errNote = st.lastError
+                ? `<p class="streamux-last-error">${escapeHtml(st.lastError)}</p>`
+                : '';
+            const ls = logStateFor(name);
+            const logOpen = ls.open ? ' open' : '';
+            const logExpanded = ls.open ? 'true' : 'false';
+            const logHidden = ls.open ? '' : ' hidden';
+            const errorsChk = ls.errorsOnly ? ' checked' : '';
+            const autoChk = ls.autoScroll ? ' checked' : '';
+            const logPreview = ls.open ? escapeHtml(displayLogText(ls)) : '';
+            return `<div class="streamux-stream${bits.stuck ? ' stuck' : ''}${bits.stopped ? ' stopped' : ''}${(!bits.encodingOn && !bits.stopped) ? ' encoding-off' : ''}" data-stream="${escapeHtml(name)}">
+                <div class="streamux-stream-head">
                     <h3>${escapeHtml(name)}</h3>
-                    <span class="overview-meta">${escapeHtml(enc)} · ${escapeHtml(ingest)} · ${escapeHtml(published)}</span>
+                    <span class="streamux-meta" data-sig="${escapeHtml(bits.metaSig)}">${bits.metaHtml}</span>
                 </div>
-                ${alert}
-                <div class="rung-bar">${buttons}</div>
-                <label class="overview-overlay">
-                    <input type="checkbox" data-overlay="${escapeHtml(name)}"${st.overlay ? ' checked' : ''}>
-                    Show fps and bitrate on the picture
+                <div class="profile-bar">${buttons}</div>
+                <label class="streamux-overlay"${overlayTitle ? ` title="${escapeHtml(overlayTitle)}"` : ''}>
+                    <input type="checkbox" data-overlay="${escapeHtml(name)}"${st.overlay ? ' checked' : ''}${overlayLocked ? ' disabled' : ''}>
+                    Show Diagnostic Overlay
                 </label>
-                <p class="overview-overlay-hint">Burned into the ATAK image on every profile. Encoder restarts when you toggle. Numbers are what this box is actually sending.</p>
-                ${st.lastError && !bad ? `<pre class="overview-log">${escapeHtml(st.lastError)}</pre>` : ''}
-                <p class="overview-urls">
-                    ATAK RTSP <code>rtsp://${escapeHtml(host)}:8554/${escapeHtml(name)}</code><br>
-                    ATAK SRT <code>srt://${escapeHtml(host)}:8890?streamid=read:${escapeHtml(name)}</code>
+                ${encodingOffNote}
+                ${stoppedNote}
+                ${errNote}
+                <div class="streamux-log-box${logOpen}" data-log="${escapeHtml(name)}">
+                    <button type="button" class="streamux-log-head" data-log-toggle="${escapeHtml(name)}" aria-expanded="${logExpanded}">
+                        <span class="streamux-log-title">ENCODER LOG</span>
+                        <span class="streamux-log-caret" aria-hidden="true"></span>
+                    </button>
+                    <div class="streamux-log-body"${logHidden}>
+                        <div class="streamux-log-toolbar">
+                            <label class="streamux-log-check"><input type="checkbox" data-log-errors="${escapeHtml(name)}"${errorsChk}> Errors only</label>
+                            <label class="streamux-log-check"><input type="checkbox" data-log-autoscroll="${escapeHtml(name)}"${autoChk}> Auto-scroll</label>
+                            <button type="button" class="streamux-log-copy" data-log-copy="${escapeHtml(name)}">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                Copy
+                            </button>
+                        </div>
+                        <pre class="streamux-log-view">${logPreview}</pre>
+                    </div>
+                </div>
+                <p class="streamux-urls">
+                    RTSP <code>rtsp://${escapeHtml(host)}:8554/${escapeHtml(name)}</code><br>
+                    SRT <code>srt://${escapeHtml(host)}:8890?streamid=read:${escapeHtml(name)}</code>
                 </p>
             </div>`;
         }
 
         async function restartEncoder(name) {
-            const res = await fetch('/api/overview/restart', {
+            markPending(name);
+            const res = await fetch('/api/streamux/restart', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
+                delete pending[name];
                 toast(data.error || 'Restart failed', false);
+                loadStreamux();
                 return;
             }
             toast('Restarted encoder for ' + name, true);
-            setTimeout(loadOverview, 2000);
+            loadStreamux();
         }
 
-        async function setRung(name, rung) {
-            const res = await fetch('/api/overview/' + encodeURIComponent(name), {
+        async function setProfile(name, profile) {
+            markPending(name);
+            const res = await fetch('/api/streamux/' + encodeURIComponent(name), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rung }),
+                body: JSON.stringify({ profile }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                toast(data.error || 'Rung change failed', false);
+                delete pending[name];
+                toast(data.error || 'Profile change failed', false);
+                loadStreamux();
                 return;
             }
-            toast(name + ' → ' + (data.rung || rung).toUpperCase(), true);
-            loadOverview();
+            toast(name + ' → ' + (data.profile || profile).toUpperCase(), true);
+            loadStreamux();
+        }
+
+        async function setEncoding(name, enabled) {
+            enabled = !!enabled;
+            if (Object.prototype.hasOwnProperty.call(encodingHold, name) && isPending(name)) {
+                const box = listEl.querySelector('[data-encoding="' + CSS.escape(name) + '"]');
+                if (box) box.checked = encodingHold[name];
+                return;
+            }
+            encodingHold[name] = enabled;
+            pending[name] = Date.now();
+            schedulePoll();
+            paint();
+            const res = await fetch('/api/streamux/' + encodeURIComponent(name), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ encoding: enabled }),
+            });
+            const data = await res.json().catch(() => ({}));
+            delete encodingHold[name];
+            if (!res.ok) {
+                delete pending[name];
+                toast(data.error || 'Encoding change failed', false);
+                loadStreamux();
+                return;
+            }
+            toast(name + (enabled
+                ? ' encoding on'
+                : ' passthrough — overlay won’t show; picture may pause a few seconds'), true);
+            loadStreamux();
         }
 
         async function setOverlay(name, enabled) {
-            const res = await fetch('/api/overview/' + encodeURIComponent(name), {
+            markPending(name);
+            const res = await fetch('/api/streamux/' + encodeURIComponent(name), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ overlay: enabled }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
+                delete pending[name];
                 toast(data.error || 'Overlay change failed', false);
-                loadOverview();
+                loadStreamux();
                 return;
             }
-            toast(name + (enabled ? ' overlay on' : ' overlay off') + ' — encoder restarted', true);
-            loadOverview();
+            toast(name + (enabled ? ' overlay on' : ' overlay off'), true);
+            loadStreamux();
         }
 
-        document.getElementById('overview-refresh').addEventListener('click', loadOverview);
-        loadOverview();
-        setInterval(loadOverview, 4000);
+        bindListEvents();
+        bindHw();
+        document.getElementById('streamux-refresh').addEventListener('click', loadStreamux);
+        loadStreamux();
+        schedulePoll();
     </script>
 </body>
 </html>

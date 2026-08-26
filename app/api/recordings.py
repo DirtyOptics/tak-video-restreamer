@@ -214,12 +214,12 @@ def start_recording(stream_name):
                 '-vsync', 'cfr',  # Constant frame rate mode
                 '-tag:v', 'avc1'
             ])
-            logger.info(f"Recording with re-encoding (libx264 ultrafast) at CFR 29.97fps for drop-frame timecode sync")
+            logger.info("Recording with re-encoding (libx264 ultrafast) at CFR 29.97fps for drop-frame timecode sync")
         
         # Preserve data streams (KLV) by copying them
         if stream_info.get('has_data'):
             ffmpeg_args.extend(['-c:d', 'copy'])  # Copy data stream as-is
-            logger.info(f"Recording with KLV preservation enabled")
+            logger.info("Recording with KLV preservation enabled")
         
         # Audio and metadata
         # Add recording start time in ISO 8601 UTC format
@@ -729,7 +729,7 @@ def bulk_delete_recordings():
             filename = recording.get('filename')
             
             if not stream_name or not filename:
-                errors.append(f'Missing stream or filename in recording entry')
+                errors.append('Missing stream or filename in recording entry')
                 continue
             
             # Validate stream name and filename
@@ -926,7 +926,7 @@ def update_recording_keywords(stream_name, filename):
                 return jsonify({'error': 'Failed to create temporary file'}), 500
             
             # Replace original file with updated one
-            logger.info(f"Replacing original file with updated version")
+            logger.info("Replacing original file with updated version")
             shutil.move(temp_path, file_path)
             
             logger.info(f"Successfully embedded keywords into {stream_name}/{filename}")
