@@ -744,7 +744,9 @@ class TestWebInterface:
         assert b'Hardware Monitor' in response.data
         assert b"What's using CPU/RAM?" in response.data
         assert b'/api/streamux/hw' in response.data
-        assert b'streamux-hw-temp-20260826' in response.data
+        assert b'streamux-hw-grid-20260827' in response.data
+        assert b'streamux-switch' in response.data
+        assert b'role="switch"' in response.data
         assert b'streamux-hw-temp' in response.data
         assert b'>Temp<' in response.data
         assert b'streamux-hw-scope' not in response.data
@@ -1129,6 +1131,56 @@ class TestStreamuxAPI:
         mgr._watch('cam', proc, 'high', mode='encode', gen=1)
         assert ensured == []
         assert mgr.get_encoding('cam') is False
+
+    def test_face_error_source_down_hides_ffmpeg_tail(self, tmp_path, monkeypatch):
+        sx = self._patch_streamux_files(tmp_path, monkeypatch)
+        mgr = sx.StreamuxManager()
+        mgr._errors['cam'] = (
+            'encoder exited 0.\nFailed reading RTSP data: End of file\n'
+            'Output file is empty, nothing was encoded'
+        )
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *_a, **_k: {'ready': False})
+        st = mgr.status('cam')
+        assert st['sourceReady'] is False
+        assert 'End of file' not in st['lastError']
+        assert 'nothing was encoded' not in st['lastError']
+        assert st['lastError'] == sx.SOURCE_DOWN_MSG
+
+    def test_face_error_ingest_up_published_down(self, tmp_path, monkeypatch):
+        sx = self._patch_streamux_files(tmp_path, monkeypatch)
+        mgr = sx.StreamuxManager()
+        mgr._encoding['cam'] = True
+        mgr._errors['cam'] = 'passthrough exited 0\nFailed reading RTSP data: End of file'
+
+        def get_path(name):
+            if str(name).endswith('__src'):
+                return {'ready': True}
+            return {'ready': False}
+
+        monkeypatch.setattr(sx.mediamtx, 'get_path', get_path)
+        st = mgr.status('cam')
+        assert st['sourceReady'] is True
+        assert st['publishedReady'] is False
+        assert st['lastError'] == ''
+        assert 'ATAK' not in st['lastError']
+        assert 'End of file' not in st['lastError']
+
+    def test_stopped_pull_clears_card_error(self, client, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *_a, **_k: {'ready': False})
+        sx.streamux_manager._errors['unit'] = 'passthrough exited 0\nEnd of file'
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': True}
+        try:
+            data = client.get('/api/streamux').get_json()
+            row = next(s for s in data['streams'] if s['name'] == 'unit')
+            assert row['stopped'] is True
+            assert row['lastError'] == ''
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
+            sx.streamux_manager._errors.pop('unit', None)
 
     def test_watch_stale_generation_does_not_retry(self, tmp_path, monkeypatch):
         import app.services.streamux as sx

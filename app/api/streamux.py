@@ -34,6 +34,8 @@ def _attach_pull(st: dict, stream_name: str) -> dict:
     cfg = pull_stream_configs.get(stream_name) or {}
     st['sourceUrl'] = cfg.get('source_url', '')
     st['stopped'] = bool(cfg.get('stopped'))
+    if st['stopped']:
+        st['lastError'] = ''
     return st
 
 

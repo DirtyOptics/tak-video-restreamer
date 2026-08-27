@@ -1,6 +1,6 @@
 <!--
 StreamUx — ATAK published RTSP/SRT profiles. Not ABR HLS (see Settings).
-v=streamux-hw-temp-20260826
+v=streamux-hw-grid-20260827
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -8,7 +8,7 @@ v=streamux-hw-temp-20260826
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StreamUx — TAK Video Restreamer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=streamux-hw-temp-20260826">
+    <link rel="stylesheet" href="/static/styles.css?v=streamux-hw-grid-20260827">
 </head>
 <body>
     <div class="container">
@@ -87,30 +87,18 @@ v=streamux-hw-temp-20260826
                             <span class="streamux-hw-procs-note" id="streamux-hw-procs-note"></span>
                             <button type="button" class="streamux-log-copy" id="streamux-hw-procs-refresh">Refresh</button>
                         </div>
-                        <h3 class="streamux-hw-table-title" id="streamux-hw-cpu-title">Top by CPU</h3>
-                        <table class="streamux-hw-table">
-                            <thead>
-                                <tr>
-                                    <th>Process</th>
-                                    <th class="num">CPU % (sys)</th>
-                                    <th class="num">RAM %</th>
-                                    <th class="num">RAM</th>
-                                </tr>
-                            </thead>
-                            <tbody id="streamux-hw-top-cpu"></tbody>
-                        </table>
-                        <h3 class="streamux-hw-table-title">Top by RAM</h3>
-                        <table class="streamux-hw-table">
-                            <thead>
-                                <tr>
-                                    <th>Process</th>
-                                    <th class="num">RAM %</th>
-                                    <th class="num">RAM</th>
-                                    <th class="num">CPU % (sys)</th>
-                                </tr>
-                            </thead>
-                            <tbody id="streamux-hw-top-ram"></tbody>
-                        </table>
+                        <div class="streamux-hw-procs">
+                            <div class="streamux-hw-grid streamux-hw-grid-head">
+                                <span>Process</span>
+                                <span class="num">CPU % (sys)</span>
+                                <span class="num">RAM %</span>
+                                <span class="num">RAM</span>
+                            </div>
+                            <h3 class="streamux-hw-table-title" id="streamux-hw-cpu-title">Top by CPU</h3>
+                            <div class="streamux-hw-grid" id="streamux-hw-top-cpu"></div>
+                            <h3 class="streamux-hw-table-title">Top by RAM</h3>
+                            <div class="streamux-hw-grid" id="streamux-hw-top-ram"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -151,8 +139,6 @@ v=streamux-hw-temp-20260826
         const LOG_POLL_MS = 2000;
         const HW_POLL_MS = 3000;
         const ENC_OFF_NOTE = 'Turn encoding on to change profile. Viewers keep a copy of the source. Picture may pause a few seconds while ffmpeg switches.';
-        const PASS_LABEL = 'Passthrough';
-        const PASS_BUDGET = 'source copy';
         const ERR_RE = /error|warn(?:ing)?|\beof\b|dts discontinuity|i\/o error|404/i;
         let pollTimer = null;
         let hwTimer = null;
@@ -222,15 +208,12 @@ v=streamux-hw-temp-20260826
             return Math.round(mb) + 'MB';
         }
 
-        function hwRowHtml(r, order) {
+        function hwRowHtml(r) {
             const name = escapeHtml(r.name || '?');
             const cpu = fmtPct(r.cpu_percent);
             const ramP = fmtPct(r.ram_percent);
             const ram = fmtRam(r.ram_bytes);
-            if (order === 'ram') {
-                return `<tr><td>${name}</td><td class="num">${ramP}</td><td class="num">${ram}</td><td class="num">${cpu}</td></tr>`;
-            }
-            return `<tr><td>${name}</td><td class="num">${cpu}</td><td class="num">${ramP}</td><td class="num">${ram}</td></tr>`;
+            return `<span>${name}</span><span class="num">${cpu}</span><span class="num">${ramP}</span><span class="num">${ram}</span>`;
         }
 
         function paintHwTables(data) {
@@ -244,14 +227,14 @@ v=streamux-hw-temp-20260826
             if (cpuSig !== lastHwCpuSig) {
                 lastHwCpuSig = cpuSig;
                 cpuBody.innerHTML = cpuRows.length
-                    ? cpuRows.map((r) => hwRowHtml(r, 'cpu')).join('')
-                    : '<tr><td colspan="4">No processes yet.</td></tr>';
+                    ? cpuRows.map((r) => hwRowHtml(r)).join('')
+                    : '<span class="empty">No processes yet.</span>';
             }
             if (ramSig !== lastHwRamSig) {
                 lastHwRamSig = ramSig;
                 ramBody.innerHTML = ramRows.length
-                    ? ramRows.map((r) => hwRowHtml(r, 'ram')).join('')
-                    : '<tr><td colspan="4">No processes yet.</td></tr>';
+                    ? ramRows.map((r) => hwRowHtml(r)).join('')
+                    : '<span class="empty">No processes yet.</span>';
             }
         }
 
@@ -452,7 +435,7 @@ v=streamux-hw-temp-20260826
             const encTitle = encodingOn
                 ? 'Low/Med/High x264'
                 : 'passthrough copy, viewers keep RTSP/SRT';
-            const encCtrl = `<label class="st st-encoding${encodingOn ? ' ok' : ' pass'}" title="${encTitle}"><input type="checkbox" data-encoding="${escapeHtml(name)}"${encodingOn ? ' checked' : ''}${stopped ? ' disabled' : ''}> Encoding</label>`;
+            const encCtrl = `<label class="st st-encoding" title="${encTitle}"><span class="streamux-switch"><input type="checkbox" role="switch" aria-checked="${encodingOn ? 'true' : 'false'}" data-encoding="${escapeHtml(name)}"${encodingOn ? ' checked' : ''}${stopped ? ' disabled' : ''}><span class="streamux-switch-track" aria-hidden="true"></span></span> Encoding</label>`;
             return {
                 stopped, stuck, switching, encodingOn,
                 metaHtml: `${encCtrl}${encBit}${ingestBit}${atakBit}${restart}`,
@@ -481,16 +464,16 @@ v=streamux-hw-temp-20260826
                 btn.title = bits.stopped
                     ? 'Start the stream on the Dashboard first'
                     : (!bits.encodingOn ? 'Turn encoding on to change profile' : (p ? p.budget : ''));
-                const passCopy = !bits.encodingOn && !bits.stopped && st.profile === btn.dataset.profile;
                 const labelEl = btn.querySelector('.profile-label');
-                if (labelEl) labelEl.textContent = passCopy ? PASS_LABEL : (p ? p.label : '');
+                if (labelEl) labelEl.textContent = p ? p.label : '';
                 const budgetEl = btn.querySelector('.profile-budget');
-                if (budgetEl) budgetEl.textContent = passCopy ? PASS_BUDGET : (p ? p.budget : '');
+                if (budgetEl) budgetEl.textContent = p ? p.budget : '';
             });
             const encodingBox = card.querySelector('[data-encoding]');
             if (encodingBox) {
                 if (!holdingEnc) encodingBox.checked = bits.encodingOn;
                 encodingBox.disabled = bits.stopped;
+                encodingBox.setAttribute('aria-checked', encodingBox.checked ? 'true' : 'false');
             }
             const overlay = card.querySelector('[data-overlay]');
             const overlayLockTitle = bits.stopped
@@ -507,7 +490,7 @@ v=streamux-hw-temp-20260826
             const overlayHint = card.querySelector('.streamux-overlay-copy');
             if (overlayHint) overlayHint.remove();
             let encOffP = card.querySelector('.streamux-encoding-off-note');
-            if (!bits.encodingOn && !bits.stopped) {
+            if (!bits.encodingOn && !bits.stopped && st.sourceReady) {
                 if (!encOffP) {
                     encOffP = document.createElement('p');
                     encOffP.className = 'streamux-overlay-hint streamux-encoding-off-note';
@@ -531,13 +514,16 @@ v=streamux-hw-temp-20260826
             }
             let errP = card.querySelector('.streamux-last-error');
             if (st.lastError) {
+                const errClass = (!st.sourceReady && !bits.stopped)
+                    ? 'streamux-last-error streamux-source-down'
+                    : 'streamux-last-error';
                 if (!errP) {
                     errP = document.createElement('p');
-                    errP.className = 'streamux-last-error';
                     const logBox = card.querySelector('.streamux-log-box');
                     if (logBox) logBox.before(errP);
                     else card.appendChild(errP);
                 }
+                errP.className = errClass;
                 if (errP.textContent !== st.lastError) errP.textContent = st.lastError;
             } else if (errP) {
                 errP.remove();
@@ -782,12 +768,9 @@ v=streamux-hw-temp-20260826
                 const title = bits.stopped
                     ? 'Start the stream on the Dashboard first'
                     : (!bits.encodingOn ? 'Turn encoding on to change profile' : escapeHtml(p.budget));
-                const passCopy = !bits.encodingOn && !bits.stopped && st.profile === p.id;
-                const label = passCopy ? PASS_LABEL : p.label;
-                const budget = passCopy ? PASS_BUDGET : p.budget;
                 return `<button type="button" class="profile-btn${active}" data-name="${escapeHtml(name)}" data-profile="${p.id}" title="${title}"${disabled}>
-                    <span class="profile-label">${escapeHtml(label)}</span>
-                    <span class="profile-budget">${escapeHtml(budget)}</span>
+                    <span class="profile-label">${escapeHtml(p.label)}</span>
+                    <span class="profile-budget">${escapeHtml(p.budget)}</span>
                 </button>`;
             }).join('');
             const overlayLocked = bits.stopped || !bits.encodingOn;
@@ -796,14 +779,17 @@ v=streamux-hw-temp-20260826
                 : (!bits.encodingOn
                     ? 'Overlay cannot burn on passthrough. Turn encoding on to show the diagnostic overlay.'
                     : '');
-            const encodingOffNote = (!bits.encodingOn && !bits.stopped)
+            const encodingOffNote = (!bits.encodingOn && !bits.stopped && st.sourceReady)
                 ? `<p class="streamux-overlay-hint streamux-encoding-off-note">${ENC_OFF_NOTE}</p>`
                 : '';
             const stoppedNote = bits.stopped
                 ? '<p class="streamux-overlay-hint streamux-stopped-note">Stopped on the Dashboard — ingest is off. Start it there to resume, or Delete to remove it.</p>'
                 : '';
+            const errClass = (!st.sourceReady && !bits.stopped)
+                ? 'streamux-last-error streamux-source-down'
+                : 'streamux-last-error';
             const errNote = st.lastError
-                ? `<p class="streamux-last-error">${escapeHtml(st.lastError)}</p>`
+                ? `<p class="${errClass}">${escapeHtml(st.lastError)}</p>`
                 : '';
             const ls = logStateFor(name);
             const logOpen = ls.open ? ' open' : '';
@@ -889,7 +875,10 @@ v=streamux-hw-temp-20260826
             enabled = !!enabled;
             if (Object.prototype.hasOwnProperty.call(encodingHold, name) && isPending(name)) {
                 const box = listEl.querySelector('[data-encoding="' + CSS.escape(name) + '"]');
-                if (box) box.checked = encodingHold[name];
+                if (box) {
+                    box.checked = encodingHold[name];
+                    box.setAttribute('aria-checked', box.checked ? 'true' : 'false');
+                }
                 return;
             }
             encodingHold[name] = enabled;

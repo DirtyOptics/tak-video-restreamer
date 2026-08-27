@@ -166,6 +166,29 @@ def profile_catalog() -> list:
     ]
 
 
+# Card-facing copy. FFmpeg tails stay in ENCODER LOG, not lastError.
+SOURCE_DOWN_MSG = (
+    'Source is not reaching this box. Check the camera or Start on Dashboard. '
+    'Encoder log has the ffmpeg detail.'
+)
+
+
+def face_error(*, ingest: bool, published: bool, encoding: bool, running: bool,
+               stored: str = '') -> str:
+    """One-line card banner. Never paste an ffmpeg log tail.
+
+    Pills already cover ingest-up / published-down (Streaming off, Restart).
+    Do not put ATAK or 404 copy on the card.
+    """
+    stored = (stored or '').strip()
+    overlay_note = stored and 'without the overlay' in stored.lower()
+    if not ingest:
+        return SOURCE_DOWN_MSG
+    if overlay_note and (running or not published):
+        return stored
+    return ''
+
+
 def find_font() -> str:
     for path in FONT_CANDIDATES:
         if os.path.isfile(path):
@@ -472,15 +495,13 @@ class StreamuxManager:
         pub_path = mediamtx.get_path(stream_name) or {}
         published = bool(pub_path.get('ready'))
         ingest = bool(src_path.get('ready'))
-        if ingest and not published:
-            if not last_error:
-                if encoding:
-                    last_error = 'ATAK path is down (404 / not ready). Ingest is still up. Restart the encoder.'
-                else:
-                    last_error = (
-                        'Passthrough is down. Ingest is still up. '
-                        'Published URL is a copy of the source when the copy process is running.'
-                    )
+        last_error = face_error(
+            ingest=ingest,
+            published=published,
+            encoding=encoding,
+            running=running,
+            stored=last_error,
+        )
         return {
             'name': stream_name,
             'profile': profile,
@@ -767,8 +788,6 @@ class StreamuxManager:
                 fh.flush()
             except Exception:
                 pass
-        log_path = encoder_log_file(stream_name) or _encoder_log_write_path(stream_name)
-        tail = self._log_tail(log_path)
         with self._lock:
             current = self._procs.get(stream_name)
             still_ours = current is proc
@@ -776,10 +795,7 @@ class StreamuxManager:
             if still_ours:
                 self._procs.pop(stream_name, None)
             if still_ours and not stopping:
-                self._errors[stream_name] = (
-                    f'encoder exited {rc}. {tail}'.strip()
-                    or f'encoder exited {rc}'
-                )
+                self._errors[stream_name] = f'{mode} exited {rc}'
         if still_ours and not stopping:
             if int(gen) != self._current_gen(stream_name):
                 logger.info(
@@ -824,9 +840,6 @@ class StreamuxManager:
         else:
             with self._lock:
                 self._stopping.discard(stream_name)
-
-    def _log_tail(self, log_path: str, lines: int = 8) -> str:
-        return '\n'.join(_tail_lines(log_path, lines)).strip()
 
     def _streamux_publish_pids(self, stream_name: str) -> list:
         """FFmpeg PIDs publishing the ATAK path — encode or passthrough, not {name}__src."""
