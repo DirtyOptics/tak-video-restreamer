@@ -744,16 +744,39 @@ class TestWebInterface:
         assert b'Hardware Monitor' in response.data
         assert b"What's using CPU/RAM?" in response.data
         assert b'/api/streamux/hw' in response.data
-        assert b'streamux-hw-grid-20260827' in response.data
+        assert b'streamux-roi-v1-20260827' in response.data
         assert b'streamux-switch' in response.data
         assert b'role="switch"' in response.data
         assert b'streamux-hw-temp' in response.data
         assert b'>Temp<' in response.data
         assert b'streamux-hw-scope' not in response.data
         assert b'CM5 kernel' not in response.data
+        assert b'Region of interest' in response.data
+        assert b'streamux-roi-modal' in response.data
+        assert b'naturalWidth' in response.data
+        assert b'/still' in response.data
+        assert b'If the camera pans' in response.data
         html = response.data.decode('utf-8')
         assert html.find('streamux-lead') < html.find('id="streamux-hw"') < html.find('>Profiles<')
         assert b'rung' not in response.data.lower()
+
+    def test_videowall_page_loads(self, client):
+        response = client.get('/videowall')
+        assert response.status_code == 200
+        assert b'Video Wall' in response.data
+
+    def test_videowall_releases_wall_abr_on_leave(self, client):
+        """Wall auto-starts ABR with source=wall and releases on pagehide / last tile."""
+        body = client.get('/videowall').data.decode('utf-8')
+        assert 'source=wall' in body
+        assert 'pagehide' in body
+        assert 'releaseAllWallAbr' in body
+        assert 'releaseUnusedWallAbr' in body
+        assert "method: 'POST'" in body
+        assert "method: 'DELETE'" in body
+        # Unscoped ABR POST would persist like Dashboard operator ABR.
+        assert "/abr`, { method: 'POST' }" not in body
+        assert '/abr?source=wall' in body
 
 
 # =============================================================================
@@ -939,6 +962,7 @@ class TestStreamuxAPI:
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
         monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        monkeypatch.setattr(sx, 'ROI_STATE_FILE', str(tmp_path / 'streamux_roi.json'))
         mgr = sx.StreamuxManager()
         assert mgr.get_profile('foot_traffic') == 'low'
         assert new.is_file()
@@ -961,6 +985,7 @@ class TestStreamuxAPI:
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
         monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        monkeypatch.setattr(sx, 'ROI_STATE_FILE', str(tmp_path / 'streamux_roi.json'))
         mgr = sx.StreamuxManager()
         assert mgr.get_encoding('MOHOC') is False
         assert mgr.get_encoding('traffic_loop') is True
@@ -978,6 +1003,8 @@ class TestStreamuxAPI:
         assert 'libx264' not in cmd
         assert '-c' in cmd
         assert 'copy' in cmd
+        assert 'crop=' not in joined
+        assert '-vf' not in cmd
         assert 'publish:MOHOC' in joined
         assert 'publish:MOHOC__src' not in joined
         assert source_name('MOHOC') in joined
@@ -988,6 +1015,7 @@ class TestStreamuxAPI:
         monkeypatch.setattr(sx.streamux_manager, '_restart', lambda *a, **k: None)
         monkeypatch.setattr(sx.streamux_manager, '_save', lambda: None)
         monkeypatch.setattr(sx.streamux_manager, '_save_overlays', lambda: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save_roi', lambda: None)
         with pull_stream_lock:
             pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
         try:
@@ -1028,6 +1056,7 @@ class TestStreamuxAPI:
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
         monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        monkeypatch.setattr(sx, 'ROI_STATE_FILE', str(tmp_path / 'streamux_roi.json'))
         monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
         mgr = sx.StreamuxManager()
         mgr._encoding['cam'] = False
@@ -1064,6 +1093,7 @@ class TestStreamuxAPI:
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_STATE_FILE', str(tmp_path / 'overview_overlay.json'))
         monkeypatch.setattr(sx, 'OVERLAY_DIR', str(tmp_path / 'streamux-overlay'))
         monkeypatch.setattr(sx, 'LEGACY_OVERLAY_DIR', str(tmp_path / 'overview-overlay'))
+        monkeypatch.setattr(sx, 'ROI_STATE_FILE', str(tmp_path / 'streamux_roi.json'))
         monkeypatch.setattr(sx, 'FFMPEG_LOG_DIR', str(tmp_path / 'ffmpeg'))
         return sx
 
@@ -1074,6 +1104,7 @@ class TestStreamuxAPI:
         monkeypatch.setattr(sx.streamux_manager, '_restart', lambda n: restarts.append(n))
         monkeypatch.setattr(sx.streamux_manager, '_save', lambda: None)
         monkeypatch.setattr(sx.streamux_manager, '_save_overlays', lambda: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save_roi', lambda: None)
         monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *a, **k: {'ready': True})
 
         class Alive:
@@ -1101,8 +1132,167 @@ class TestStreamuxAPI:
             sx.streamux_manager._profiles.pop('unit', None)
             sx.streamux_manager._encoding.pop('unit', None)
             sx.streamux_manager._overlays.pop('unit', None)
+            sx.streamux_manager._rois.pop('unit', None)
             sx.streamux_manager._procs.pop('unit', None)
             sx.streamux_manager._errors.pop('unit', None)
+
+    def test_roi_parse_persist_and_crop_vf(self, tmp_path, monkeypatch):
+        import app.services.streamux as sx
+        self._patch_streamux_files(tmp_path, monkeypatch)
+        box = {'enabled': True, 'x': 0.12, 'y': 0.45, 'w': 0.70, 'h': 0.40}
+        parsed = sx.parse_roi(box)
+        assert parsed['enabled'] is True
+        assert parsed['x'] == 0.12
+        path = tmp_path / 'streamux_roi.json'
+        path.write_text(json.dumps({'foot_traffic': box}), encoding='utf-8')
+        mgr = sx.StreamuxManager()
+        monkeypatch.setattr(mgr, '_restart', lambda n: None)
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *a, **k: {'ready': True})
+        assert mgr.get_roi('foot_traffic')['w'] == 0.70
+        st = mgr.status('foot_traffic')
+        assert st['roi']['enabled'] is True
+        assert st['roi']['x'] == 0.12
+        cmd = mgr._build_cmd('foot_traffic', 'low')
+        vf = cmd[cmd.index('-vf') + 1]
+        assert vf.startswith('crop=floor(iw*0.700000/2)*2:floor(ih*0.400000/2)*2:')
+        assert 'floor(iw*0.120000/2)*2:floor(ih*0.450000/2)*2' in vf
+        assert 'scale=426:240:force_original_aspect_ratio=decrease' in vf
+        assert 'pad=426:240:' in vf
+        mgr.update('foot_traffic', roi=None)
+        assert mgr.get_roi('foot_traffic') is None
+        saved = json.loads(path.read_text(encoding='utf-8'))
+        assert saved == {}
+        vf_clear = mgr._build_cmd('foot_traffic', 'low')[cmd.index('-vf') + 1]
+        assert not vf_clear.startswith('crop=')
+
+    def test_roi_validation_rejects_tiny_and_oob(self):
+        import app.services.streamux as sx
+        import pytest
+        with pytest.raises(ValueError):
+            sx.parse_roi({'x': 0.0, 'y': 0.0, 'w': 0.05, 'h': 0.50})
+        with pytest.raises(ValueError):
+            sx.parse_roi({'x': 0.0, 'y': 0.0, 'w': 0.50, 'h': 0.05})
+        with pytest.raises(ValueError):
+            sx.parse_roi({'x': 0.8, 'y': 0.0, 'w': 0.3, 'h': 0.5})
+        with pytest.raises(ValueError):
+            sx.parse_roi({'x': -0.1, 'y': 0.0, 'w': 0.5, 'h': 0.5})
+        with pytest.raises(ValueError):
+            sx.parse_roi({'x': '0.1;crop', 'y': 0.0, 'w': 0.5, 'h': 0.5})
+        assert sx.parse_roi(None) is None
+        assert sx.parse_roi({'enabled': False, 'x': 0.1, 'y': 0.1, 'w': 0.5, 'h': 0.5}) is None
+
+    def test_put_roi_and_encoding_off_does_not_crop_or_restart(self, client, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        restarts = []
+        monkeypatch.setattr(sx.streamux_manager, '_restart', lambda n: restarts.append(n))
+        monkeypatch.setattr(sx.streamux_manager, '_save', lambda: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save_overlays', lambda: None)
+        monkeypatch.setattr(sx.streamux_manager, '_save_roi', lambda: None)
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *a, **k: {'ready': True})
+
+        class Alive:
+            def poll(self):
+                return None
+
+        box = {'enabled': True, 'x': 0.12, 'y': 0.45, 'w': 0.70, 'h': 0.40}
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            sx.streamux_manager._profiles['unit'] = 'low'
+            sx.streamux_manager._encoding['unit'] = True
+            sx.streamux_manager._procs['unit'] = Alive()
+            sx.streamux_manager._rois.pop('unit', None)
+            res = client.put('/api/streamux/unit', json={'roi': box})
+            assert res.status_code == 200
+            body = res.get_json()
+            assert body['roi']['enabled'] is True
+            assert body['roi']['w'] == 0.70
+            assert restarts == ['unit']
+            vf = sx.streamux_manager._build_cmd('unit', 'low')
+            assert vf[vf.index('-vf') + 1].startswith('crop=')
+            restarts.clear()
+            sx.streamux_manager._encoding['unit'] = False
+            sx.streamux_manager._procs['unit'] = Alive()
+            off = client.put('/api/streamux/unit', json={'roi': {
+                'x': 0.20, 'y': 0.20, 'w': 0.50, 'h': 0.50,
+            }})
+            assert off.status_code == 200
+            assert off.get_json()['encoding'] is False
+            assert off.get_json()['mode'] == 'passthrough'
+            assert sx.streamux_manager.get_roi('unit')['x'] == 0.20
+            assert restarts == []
+            pt = ' '.join(sx.streamux_manager._build_passthrough_cmd('unit'))
+            assert 'crop=' not in pt
+            tiny = client.put('/api/streamux/unit', json={'roi': {
+                'x': 0.0, 'y': 0.0, 'w': 0.05, 'h': 0.5,
+            }})
+            assert tiny.status_code == 400
+            cleared = client.put('/api/streamux/unit', json={'roi': None})
+            assert cleared.status_code == 200
+            assert cleared.get_json()['roi'] is None
+            assert restarts == []
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
+            sx.streamux_manager._profiles.pop('unit', None)
+            sx.streamux_manager._encoding.pop('unit', None)
+            sx.streamux_manager._rois.pop('unit', None)
+            sx.streamux_manager._procs.pop('unit', None)
+            sx.streamux_manager._errors.pop('unit', None)
+
+    def test_still_from_src_not_published(self, client, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        jpeg = b'\xff\xd8\xff\xd9'
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured['cmd'] = cmd
+            class Result:
+                returncode = 0
+                stdout = jpeg
+                stderr = b''
+            return Result()
+
+        monkeypatch.setattr(sx.subprocess, 'run', fake_run)
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda name: {
+            'ready': str(name).endswith('__src'),
+        })
+        with pull_stream_lock:
+            pull_stream_configs['foot_traffic'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            missing = client.get('/api/streamux/missing/still')
+            assert missing.status_code == 404
+            assert 'missing/still' not in (missing.get_json() or {}).get('error', '')
+            res = client.get('/api/streamux/foot_traffic/still')
+            assert res.status_code == 200
+            assert res.mimetype == 'image/jpeg'
+            assert res.data == jpeg
+            joined = ' '.join(captured['cmd'])
+            assert 'foot_traffic__src' in joined
+            assert '-frames:v' in captured['cmd']
+            pub = [p for p in captured['cmd'] if p.endswith('/foot_traffic') and '__src' not in p]
+            assert pub == []
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('foot_traffic', None)
+            sx.streamux_manager._still_cache.pop('foot_traffic', None)
+
+    def test_still_409_when_ingest_down(self, client, monkeypatch):
+        import app.services.streamux as sx
+        from app.state import pull_stream_configs, pull_stream_lock
+        monkeypatch.setattr(sx.mediamtx, 'get_path', lambda *_a, **_k: {'ready': False})
+        with pull_stream_lock:
+            pull_stream_configs['unit'] = {'source_url': 'rtsp://x', 'stopped': False}
+        try:
+            res = client.get('/api/streamux/unit/still')
+            assert res.status_code == 409
+            err = (res.get_json() or {}).get('error', '').lower()
+            assert 'still' in err or 'source' in err
+        finally:
+            with pull_stream_lock:
+                pull_stream_configs.pop('unit', None)
 
     def test_watch_does_not_respawn_encode_after_encoding_off(self, tmp_path, monkeypatch):
         import app.services.streamux as sx
@@ -1594,6 +1784,124 @@ class TestTranscodeOptions:
         """/api/klv/extract was backed by a missing script; it should 404"""
         response = client.post('/api/klv/extract', json={'videoFile': 'a/b.ts'})
         assert response.status_code == 404
+
+
+class TestAbrHolders:
+    """Video Wall ABR must not leak after the wall is unused; Dashboard ABR stays on."""
+
+    def _manager(self, tmp_path, monkeypatch):
+        import app.services.abr as abr_mod
+        monkeypatch.setattr(abr_mod, 'HLS_OUTPUT_DIR', str(tmp_path / 'hls'))
+        monkeypatch.setattr(abr_mod, 'ABR_STATE_FILE', str(tmp_path / 'abr_state.json'))
+        mgr = abr_mod.ABRManager()
+        monkeypatch.setattr(mgr, '_start_monitor_thread', lambda name: None)
+        return mgr, abr_mod
+
+    def _persisted(self, abr_mod):
+        path = abr_mod.ABR_STATE_FILE
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+
+    def test_wall_stop_kills_wall_only_abr(self, tmp_path, monkeypatch):
+        mgr, abr_mod = self._manager(tmp_path, monkeypatch)
+        started = mgr.start('MOHOC', source='wall')
+        assert started['status'] == 'started'
+        assert started['operator'] is False
+        assert started['wall'] == 1
+        assert mgr.status('MOHOC')['running'] is True
+        assert self._persisted(abr_mod) == {'streams': []}
+
+        stopped = mgr.stop('MOHOC', source='wall')
+        assert stopped['status'] == 'stopped'
+        assert stopped['running'] is False
+        assert mgr.status('MOHOC')['running'] is False
+
+    def test_wall_stop_preserves_operator_abr(self, tmp_path, monkeypatch):
+        mgr, abr_mod = self._manager(tmp_path, monkeypatch)
+        mgr.start('yt_plates', source='operator')
+        mgr.start('yt_plates', source='wall')
+        assert mgr.status('yt_plates')['operator'] is True
+        assert mgr.status('yt_plates')['wall'] == 1
+        assert self._persisted(abr_mod) == {'streams': ['yt_plates']}
+
+        released = mgr.stop('yt_plates', source='wall')
+        assert released['status'] == 'released'
+        assert released['running'] is True
+        assert mgr.status('yt_plates')['running'] is True
+        assert mgr.status('yt_plates')['operator'] is True
+        assert mgr.status('yt_plates')['wall'] == 0
+        assert self._persisted(abr_mod) == {'streams': ['yt_plates']}
+
+    def test_operator_off_stops_even_if_wall_is_watching(self, tmp_path, monkeypatch):
+        mgr, _abr_mod = self._manager(tmp_path, monkeypatch)
+        mgr.start('MOHOC', source='operator')
+        mgr.start('MOHOC', source='wall')
+        stopped = mgr.stop('MOHOC', source='operator')
+        assert stopped['status'] == 'stopped'
+        assert mgr.status('MOHOC')['running'] is False
+
+    def test_two_wall_viewers_last_release_stops(self, tmp_path, monkeypatch):
+        mgr, _abr_mod = self._manager(tmp_path, monkeypatch)
+        mgr.start('cam1', source='wall')
+        mgr.start('cam1', source='wall')
+        first = mgr.stop('cam1', source='wall')
+        assert first['status'] == 'released'
+        assert first['wall'] == 1
+        assert mgr.status('cam1')['running'] is True
+        second = mgr.stop('cam1', source='wall')
+        assert second['status'] == 'stopped'
+        assert mgr.status('cam1')['running'] is False
+
+    def test_operator_upgrade_persists_after_wall_start(self, tmp_path, monkeypatch):
+        mgr, abr_mod = self._manager(tmp_path, monkeypatch)
+        mgr.start('MOHOC', source='wall')
+        assert self._persisted(abr_mod) == {'streams': []}
+        upgraded = mgr.start('MOHOC', source='operator')
+        assert upgraded['status'] == 'already_running'
+        assert upgraded['operator'] is True
+        assert self._persisted(abr_mod) == {'streams': ['MOHOC']}
+        mgr.stop('MOHOC', source='wall')
+        assert mgr.status('MOHOC')['running'] is True
+
+    def test_api_wall_query_param(self, client, tmp_path, monkeypatch):
+        import app.services.abr as abr_mod
+        import app.api.hls as hls_mod
+        mgr, _ = self._manager(tmp_path, monkeypatch)
+        monkeypatch.setattr(hls_mod, 'abr_manager', mgr)
+        monkeypatch.setattr(abr_mod, 'abr_manager', mgr)
+
+        start = client.post('/api/streams/MOHOC/abr?source=wall')
+        assert start.status_code == 200
+        body = json.loads(start.data)
+        assert body['status'] == 'started'
+        assert body['operator'] is False
+        assert body['wall'] == 1
+
+        stop = client.delete('/api/streams/MOHOC/abr?source=wall')
+        assert stop.status_code == 200
+        stopped = json.loads(stop.data)
+        assert stopped['status'] == 'stopped'
+        assert json.loads(client.get('/api/streams/MOHOC/abr/status').data)['running'] is False
+
+    def test_api_default_is_operator_and_survives_wall_release(self, client, tmp_path, monkeypatch):
+        import app.api.hls as hls_mod
+        mgr, _ = self._manager(tmp_path, monkeypatch)
+        monkeypatch.setattr(hls_mod, 'abr_manager', mgr)
+
+        assert client.post('/api/streams/yt_plates/abr').status_code == 200
+        assert client.post('/api/streams/yt_plates/abr?source=wall').status_code == 200
+        released = json.loads(client.delete('/api/streams/yt_plates/abr?source=wall').data)
+        assert released['status'] == 'released'
+        assert released['running'] is True
+        status = json.loads(client.get('/api/streams/yt_plates/abr/status').data)
+        assert status['running'] is True
+        assert status['operator'] is True
+
+    def test_api_rejects_unknown_source(self, client):
+        response = client.post('/api/streams/MOHOC/abr?source=sneaky')
+        assert response.status_code == 400
 
 
 # =============================================================================

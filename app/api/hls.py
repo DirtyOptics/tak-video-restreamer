@@ -100,10 +100,28 @@ def _valid_stream(name):
 # ABR management endpoints
 # ------------------------------------------------------------------
 
+def _abr_source():
+    """Holder that requested this ABR start/stop. Default is operator (Dashboard)."""
+    source = request.args.get('source')
+    if source is None and request.is_json:
+        data = request.get_json(silent=True) or {}
+        if isinstance(data, dict):
+            source = data.get('source')
+    if source is None or str(source).strip() == '':
+        return 'operator'
+    source = str(source).strip().lower()
+    if source not in ('operator', 'wall'):
+        return None
+    return source
+
+
 @hls_bp.route('/api/streams/<path:stream_name>/abr', methods=['POST'])
 def start_abr(stream_name):
     """Enable ABR HLS transcoding for a stream."""
-    result = abr_manager.start(stream_name)
+    source = _abr_source()
+    if source is None:
+        return jsonify({'error': 'source must be operator or wall'}), 400
+    result = abr_manager.start(stream_name, source=source)
     status_code = 200 if result['status'] in ('started', 'already_running') else 500
     return jsonify(result), status_code
 
@@ -111,7 +129,10 @@ def start_abr(stream_name):
 @hls_bp.route('/api/streams/<path:stream_name>/abr', methods=['DELETE'])
 def stop_abr(stream_name):
     """Disable ABR HLS transcoding for a stream."""
-    result = abr_manager.stop(stream_name)
+    source = _abr_source()
+    if source is None:
+        return jsonify({'error': 'source must be operator or wall'}), 400
+    result = abr_manager.stop(stream_name, source=source)
     return jsonify(result), 200
 
 

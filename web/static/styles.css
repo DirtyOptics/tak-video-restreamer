@@ -2054,7 +2054,8 @@ header h1 {
     gap: 0.5rem;
     justify-content: flex-end;
 }
-.streamux-meta .st {
+.streamux-meta .st,
+.streamux-roi-row .st {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -2067,14 +2068,16 @@ header h1 {
     font-weight: 500;
     white-space: nowrap;
 }
-.streamux-meta .st-dot {
+.streamux-meta .st-dot,
+.streamux-roi-row .st-dot {
     width: 0.45rem;
     height: 0.45rem;
     border-radius: 50%;
     background: var(--text-muted);
     flex: 0 0 auto;
 }
-.streamux-meta .st.ok .st-dot { background: var(--accent-success); }
+.streamux-meta .st.ok .st-dot,
+.streamux-roi-row .st.ok .st-dot { background: var(--accent-success); }
 .streamux-meta .st.wait {
     color: var(--accent-warning);
     border-color: rgba(245, 158, 11, 0.45);
@@ -2519,4 +2522,125 @@ pre.streamux-log-view {
 }
 @media (max-width: 800px) {
     .streamux-hw-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.streamux-roi-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin: 0.65rem 0 0;
+}
+.streamux-roi-open {
+    padding: 0.28rem 0.7rem;
+    font-size: 0.85rem;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.streamux-roi-open:hover { border-color: var(--accent-primary, #5ec8e8); }
+.streamux-roi-open:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.streamux-roi-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(2, 6, 23, 0.72);
+}
+.streamux-roi-modal[hidden] { display: none !important; }
+.streamux-roi-dialog {
+    width: min(52rem, 100%);
+    max-height: 92vh;
+    overflow: auto;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem 1.1rem 1.1rem;
+}
+.streamux-roi-dialog h3 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+.streamux-roi-copy {
+    margin: 0.4rem 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+.streamux-roi-stage {
+    position: relative;
+    background: #0b1220;
+    border: 1px solid #1f2937;
+    border-radius: 6px;
+    overflow: hidden;
+    user-select: none;
+    touch-action: none;
+    cursor: crosshair;
+}
+.streamux-roi-stage img {
+    display: block;
+    max-width: 100%;
+    max-height: 60vh;
+    width: auto;
+    height: auto;
+    margin: 0 auto;
+    object-fit: contain;
+    pointer-events: none;
+}
+.streamux-roi-stage img[hidden] { display: none !important; }
+.streamux-roi-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    min-height: 14rem;
+    padding: 1.5rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+}
+.streamux-roi-loading[hidden] { display: none !important; }
+.streamux-roi-spinner {
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 3px solid rgba(94, 200, 232, 0.22);
+    border-top-color: #5ec8e8;
+    border-radius: 50%;
+    animation: streamux-spin 0.7s linear infinite;
+}
+.streamux-roi-loading-text {
+    max-width: 22rem;
+    line-height: 1.4;
+}
+.streamux-roi-box {
+    position: absolute;
+    border: 2px solid #5ec8e8;
+    background: rgba(94, 200, 232, 0.18);
+    pointer-events: none;
+    box-sizing: border-box;
+}
+.streamux-roi-status {
+    margin: 0.55rem 0 0;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+.streamux-roi-status:empty {
+    display: none;
+    margin: 0;
+}
+.streamux-roi-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
 }

@@ -1,6 +1,6 @@
 <!--
 StreamUx — ATAK published RTSP/SRT profiles. Not ABR HLS (see Settings).
-v=streamux-hw-grid-20260827
+v=streamux-roi-v1-pill-20260827
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -8,7 +8,7 @@ v=streamux-hw-grid-20260827
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StreamUx — TAK Video Restreamer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=streamux-hw-grid-20260827">
+    <link rel="stylesheet" href="/static/styles.css?v=streamux-roi-v1-pill-20260827">
 </head>
 <body>
     <div class="container">
@@ -117,6 +117,27 @@ v=streamux-hw-grid-20260827
     </div>
 
     <div id="streamux-toast" class="streamux-toast" hidden></div>
+
+    <div id="streamux-roi-modal" class="streamux-roi-modal" hidden role="dialog" aria-modal="true" aria-labelledby="streamux-roi-title">
+        <div class="streamux-roi-dialog">
+            <h3 id="streamux-roi-title">Region of interest</h3>
+            <p class="streamux-roi-copy">The box is in the camera picture. If the camera pans, redraw.</p>
+            <div class="streamux-roi-stage" id="streamux-roi-stage">
+                <div class="streamux-roi-loading" id="streamux-roi-loading" hidden>
+                    <span class="streamux-roi-spinner" aria-hidden="true"></span>
+                    <span class="streamux-roi-loading-text">Getting a still from the source…</span>
+                </div>
+                <img id="streamux-roi-img" alt="Source still" draggable="false" hidden>
+                <div class="streamux-roi-box" id="streamux-roi-box" hidden></div>
+            </div>
+            <p class="streamux-roi-status" id="streamux-roi-status"></p>
+            <div class="streamux-roi-actions">
+                <button type="button" class="btn btn-small btn-primary" id="streamux-roi-apply">Apply</button>
+                <button type="button" class="btn btn-small btn-secondary" id="streamux-roi-clear">Clear</button>
+                <button type="button" class="btn btn-small btn-secondary" id="streamux-roi-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         const logoutLink = document.getElementById('logout-link');
@@ -333,6 +354,12 @@ v=streamux-hw-grid-20260827
                 const copy = e.target.closest('[data-log-copy]');
                 if (copy && listEl.contains(copy)) {
                     copyEncoderLog(copy.dataset.logCopy);
+                    return;
+                }
+                const roiBtn = e.target.closest('[data-roi]');
+                if (roiBtn && listEl.contains(roiBtn)) {
+                    if (roiBtn.disabled) return;
+                    openRoiPicker(roiBtn.dataset.roi);
                 }
             });
             listEl.addEventListener('change', (e) => {
@@ -489,6 +516,28 @@ v=streamux-hw-grid-20260827
             if (overlayLabel) overlayLabel.title = overlayLockTitle;
             const overlayHint = card.querySelector('.streamux-overlay-copy');
             if (overlayHint) overlayHint.remove();
+            const roiLock = roiLockBits(st, bits);
+            const roiBtn = card.querySelector('[data-roi]');
+            if (roiBtn) {
+                roiBtn.disabled = roiLock.locked;
+                roiBtn.title = roiLock.title;
+            }
+            const roiOn = !!(st.roi && st.roi.enabled);
+            let roiBadge = card.querySelector('.streamux-roi-badge');
+            const roiRow = card.querySelector('.streamux-roi-row');
+            if (roiOn) {
+                if (!roiBadge && roiRow) {
+                    roiBadge = document.createElement('span');
+                    roiRow.appendChild(roiBadge);
+                }
+                if (roiBadge) {
+                    roiBadge.className = 'st ok streamux-roi-badge';
+                    roiBadge.title = 'Region of interest is active';
+                    roiBadge.innerHTML = '<i class="st-dot"></i>ROI on';
+                }
+            } else if (roiBadge) {
+                roiBadge.remove();
+            }
             let encOffP = card.querySelector('.streamux-encoding-off-note');
             if (!bits.encodingOn && !bits.stopped && st.sourceReady) {
                 if (!encOffP) {
@@ -779,6 +828,8 @@ v=streamux-hw-grid-20260827
                 : (!bits.encodingOn
                     ? 'Overlay cannot burn on passthrough. Turn encoding on to show the diagnostic overlay.'
                     : '');
+            const roiLock = roiLockBits(st, bits);
+            const roiOn = !!(st.roi && st.roi.enabled);
             const encodingOffNote = (!bits.encodingOn && !bits.stopped && st.sourceReady)
                 ? `<p class="streamux-overlay-hint streamux-encoding-off-note">${ENC_OFF_NOTE}</p>`
                 : '';
@@ -808,6 +859,10 @@ v=streamux-hw-grid-20260827
                     <input type="checkbox" data-overlay="${escapeHtml(name)}"${st.overlay ? ' checked' : ''}${overlayLocked ? ' disabled' : ''}>
                     Show Diagnostic Overlay
                 </label>
+                <div class="streamux-roi-row">
+                    <button type="button" class="streamux-roi-open" data-roi="${escapeHtml(name)}"${roiLock.locked ? ' disabled' : ''}${roiLock.title ? ` title="${escapeHtml(roiLock.title)}"` : ''}>Region of interest</button>
+                    ${roiOn ? '<span class="st ok streamux-roi-badge" title="Region of interest is active"><i class="st-dot"></i>ROI on</span>' : ''}
+                </div>
                 ${encodingOffNote}
                 ${stoppedNote}
                 ${errNote}
@@ -922,7 +977,245 @@ v=streamux-hw-grid-20260827
             loadStreamux();
         }
 
+        function roiLockBits(st, bits) {
+            const locked = bits.stopped || !bits.encodingOn || !st.sourceReady;
+            let title = '';
+            if (bits.stopped) title = 'Start the stream on the Dashboard first';
+            else if (!bits.encodingOn) title = 'Crop cannot run on passthrough. Turn encoding on to set a region of interest.';
+            else if (!st.sourceReady) title = 'Source is not reaching this box. Cannot grab a still.';
+            return { locked, title };
+        }
+
+        const roiModal = document.getElementById('streamux-roi-modal');
+        const roiImg = document.getElementById('streamux-roi-img');
+        const roiBoxEl = document.getElementById('streamux-roi-box');
+        const roiStatus = document.getElementById('streamux-roi-status');
+        const roiLoading = document.getElementById('streamux-roi-loading');
+        const roiPicker = {
+            name: '',
+            dragging: false,
+            start: null,
+            box: null,
+            seq: 0,
+        };
+
+        function roiRevokeStill() {
+            if (roiImg.src && roiImg.src.indexOf('blob:') === 0) {
+                URL.revokeObjectURL(roiImg.src);
+            }
+            roiImg.onload = null;
+            roiImg.onerror = null;
+            roiImg.removeAttribute('src');
+            roiImg.hidden = true;
+        }
+
+        function roiEventToFrac(img, ev) {
+            const rect = img.getBoundingClientRect();
+            const nw = img.naturalWidth || 0;
+            const nh = img.naturalHeight || 0;
+            if (nw < 1 || nh < 1 || rect.width < 1 || rect.height < 1) return null;
+            const scale = Math.min(rect.width / nw, rect.height / nh);
+            const dw = nw * scale;
+            const dh = nh * scale;
+            const ox = rect.left + (rect.width - dw) / 2;
+            const oy = rect.top + (rect.height - dh) / 2;
+            let x = (ev.clientX - ox) / dw;
+            let y = (ev.clientY - oy) / dh;
+            x = Math.min(1, Math.max(0, x));
+            y = Math.min(1, Math.max(0, y));
+            return { x, y };
+        }
+
+        function roiNormBox(a, b) {
+            const x = Math.min(a.x, b.x);
+            const y = Math.min(a.y, b.y);
+            return { x, y, w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+        }
+
+        function roiPaintBox() {
+            const frac = roiPicker.box;
+            if (!frac || frac.w <= 0 || frac.h <= 0) {
+                roiBoxEl.hidden = true;
+                return;
+            }
+            const imgRect = roiImg.getBoundingClientRect();
+            const stageRect = roiImg.parentElement.getBoundingClientRect();
+            const nw = roiImg.naturalWidth || 0;
+            const nh = roiImg.naturalHeight || 0;
+            if (nw < 1 || nh < 1) {
+                roiBoxEl.hidden = true;
+                return;
+            }
+            const scale = Math.min(imgRect.width / nw, imgRect.height / nh);
+            const dw = nw * scale;
+            const dh = nh * scale;
+            const ox = (imgRect.width - dw) / 2 + (imgRect.left - stageRect.left);
+            const oy = (imgRect.height - dh) / 2 + (imgRect.top - stageRect.top);
+            roiBoxEl.hidden = false;
+            roiBoxEl.style.left = (ox + frac.x * dw) + 'px';
+            roiBoxEl.style.top = (oy + frac.y * dh) + 'px';
+            roiBoxEl.style.width = (frac.w * dw) + 'px';
+            roiBoxEl.style.height = (frac.h * dh) + 'px';
+        }
+
+        function closeRoiPicker() {
+            roiPicker.seq += 1;
+            roiPicker.dragging = false;
+            roiPicker.start = null;
+            roiModal.hidden = true;
+            roiLoading.hidden = true;
+            roiBoxEl.hidden = true;
+            roiRevokeStill();
+        }
+
+        async function openRoiPicker(name) {
+            roiPicker.name = name;
+            roiPicker.dragging = false;
+            roiPicker.start = null;
+            roiPicker.box = null;
+            roiPicker.seq += 1;
+            const seq = roiPicker.seq;
+            roiRevokeStill();
+            const st = lastStreams.find((s) => s.name === name) || {};
+            if (st.roi && st.roi.enabled) {
+                roiPicker.box = { x: st.roi.x, y: st.roi.y, w: st.roi.w, h: st.roi.h };
+            }
+            roiStatus.textContent = '';
+            roiBoxEl.hidden = true;
+            roiLoading.hidden = false;
+            roiModal.hidden = false;
+            try {
+                const res = await fetch('/api/streamux/' + encodeURIComponent(name) + '/still?t=' + Date.now());
+                if (seq !== roiPicker.seq) return;
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    roiLoading.hidden = true;
+                    roiImg.hidden = true;
+                    roiStatus.textContent = data.error || 'Could not grab a still.';
+                    return;
+                }
+                const blob = await res.blob();
+                if (seq !== roiPicker.seq) return;
+                const url = URL.createObjectURL(blob);
+                roiImg.onload = () => {
+                    if (seq !== roiPicker.seq) {
+                        URL.revokeObjectURL(url);
+                        return;
+                    }
+                    roiLoading.hidden = true;
+                    roiImg.hidden = false;
+                    roiStatus.textContent = 'Drag a box on the picture, then Apply.';
+                    roiPaintBox();
+                };
+                roiImg.onerror = () => {
+                    if (seq !== roiPicker.seq) return;
+                    URL.revokeObjectURL(url);
+                    roiImg.removeAttribute('src');
+                    roiImg.hidden = true;
+                    roiLoading.hidden = true;
+                    roiStatus.textContent = 'Could not grab a still.';
+                };
+                roiImg.src = url;
+            } catch (e) {
+                if (seq !== roiPicker.seq) return;
+                roiLoading.hidden = true;
+                roiImg.hidden = true;
+                roiStatus.textContent = 'Could not grab a still.';
+            }
+        }
+
+        async function applyRoi() {
+            const name = roiPicker.name;
+            const box = roiPicker.box;
+            if (!name) return;
+            if (!box || box.w < 0.10 || box.h < 0.10) {
+                roiStatus.textContent = 'Draw a larger box (at least 10% of width and height).';
+                return;
+            }
+            closeRoiPicker();
+            markPending(name);
+            const res = await fetch('/api/streamux/' + encodeURIComponent(name), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    roi: { enabled: true, x: box.x, y: box.y, w: box.w, h: box.h },
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                delete pending[name];
+                toast(data.error || 'ROI change failed', false);
+                loadStreamux();
+                return;
+            }
+            toast(name + ' ROI on — picture may pause a few seconds', true);
+            loadStreamux();
+        }
+
+        async function clearRoi() {
+            const name = roiPicker.name;
+            if (!name) return;
+            closeRoiPicker();
+            markPending(name);
+            const res = await fetch('/api/streamux/' + encodeURIComponent(name), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ roi: null }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                delete pending[name];
+                toast(data.error || 'ROI clear failed', false);
+                loadStreamux();
+                return;
+            }
+            toast(name + ' ROI cleared', true);
+            loadStreamux();
+        }
+
+        function bindRoiPicker() {
+            const stage = document.getElementById('streamux-roi-stage');
+            document.getElementById('streamux-roi-apply').addEventListener('click', applyRoi);
+            document.getElementById('streamux-roi-clear').addEventListener('click', clearRoi);
+            document.getElementById('streamux-roi-cancel').addEventListener('click', closeRoiPicker);
+            roiModal.addEventListener('click', (e) => {
+                if (e.target === roiModal) closeRoiPicker();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && !roiModal.hidden) closeRoiPicker();
+            });
+            stage.addEventListener('pointerdown', (e) => {
+                if (roiModal.hidden || e.button) return;
+                const pt = roiEventToFrac(roiImg, e);
+                if (!pt) return;
+                e.preventDefault();
+                stage.setPointerCapture(e.pointerId);
+                roiPicker.dragging = true;
+                roiPicker.start = pt;
+                roiPicker.box = { x: pt.x, y: pt.y, w: 0, h: 0 };
+                roiPaintBox();
+            });
+            stage.addEventListener('pointermove', (e) => {
+                if (!roiPicker.dragging || !roiPicker.start) return;
+                const pt = roiEventToFrac(roiImg, e);
+                if (!pt) return;
+                roiPicker.box = roiNormBox(roiPicker.start, pt);
+                roiPaintBox();
+            });
+            const endDrag = (e) => {
+                if (!roiPicker.dragging) return;
+                roiPicker.dragging = false;
+                try { stage.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+            };
+            stage.addEventListener('pointerup', endDrag);
+            stage.addEventListener('pointercancel', endDrag);
+            window.addEventListener('resize', () => {
+                if (!roiModal.hidden) roiPaintBox();
+            });
+        }
+
         bindListEvents();
+        bindRoiPicker();
         bindHw();
         document.getElementById('streamux-refresh').addEventListener('click', loadStreamux);
         loadStreamux();

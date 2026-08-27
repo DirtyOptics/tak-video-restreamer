@@ -2,10 +2,11 @@
 StreamUx API — ATAK published-path profiles (not ABR HLS).
 """
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response
 
 from app.services.streamux import (
     streamux_manager, PROFILES, profile_catalog, normalize_profile, EncodingOff,
+    StillUnavailable, parse_roi, _UNSET, source_name,
 )
 from app.services.hoststats import read_hw
 from app.state import pull_stream_configs, pull_stream_lock
@@ -105,6 +106,27 @@ def get_streamux_log(stream_name):
     return jsonify(data)
 
 
+@streamux_bp.route('/api/streamux/<stream_name>/still', methods=['GET'])
+def get_streamux_still(stream_name):
+    """JPEG still from {name}__src. Not polled by the status loop."""
+    err = _require_running_pull(stream_name)
+    if err:
+        return err
+    src = source_name(stream_name)
+    try:
+        jpeg = streamux_manager.grab_still(stream_name)
+    except StillUnavailable as e:
+        return jsonify({'error': str(e)}), int(getattr(e, 'status', 409) or 409)
+    except Exception as e:
+        logger.error(f"streamux still {stream_name} ({src}): {e}")
+        return jsonify({'error': 'Could not grab a still from the source.'}), 500
+    return Response(
+        jpeg,
+        mimetype='image/jpeg',
+        headers={'Cache-Control': 'no-store'},
+    )
+
+
 @streamux_bp.route('/api/streamux/<path:stream_name>', methods=['GET'])
 def get_streamux(stream_name):
     with pull_stream_lock:
@@ -123,11 +145,13 @@ def set_streamux(stream_name):
     has_profile = 'profile' in data and str(data.get('profile') or '').strip() != ''
     has_overlay = 'overlay' in data
     has_encoding = 'encoding' in data
-    if not has_profile and not has_overlay and not has_encoding:
-        return jsonify({'error': 'profile, overlay, or encoding required'}), 400
+    has_roi = 'roi' in data
+    if not has_profile and not has_overlay and not has_encoding and not has_roi:
+        return jsonify({'error': 'profile, overlay, encoding, or roi required'}), 400
     profile = None
     overlay = None
     encoding = None
+    roi = _UNSET
     if has_profile:
         profile = normalize_profile(str(data.get('profile') or '').strip().lower())
         if profile not in PROFILES:
@@ -141,9 +165,20 @@ def set_streamux(stream_name):
         overlay = _as_bool(data.get('overlay'))
     if has_encoding:
         encoding = _as_bool(data.get('encoding'))
+    if has_roi:
+        raw_roi = data.get('roi')
+        if raw_roi is None:
+            roi = None
+        elif isinstance(raw_roi, dict):
+            try:
+                roi = parse_roi(raw_roi)
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 400
+        else:
+            return jsonify({'error': 'roi must be an object or null'}), 400
     try:
         st = streamux_manager.update(
-            stream_name, profile=profile, overlay=overlay, encoding=encoding,
+            stream_name, profile=profile, overlay=overlay, encoding=encoding, roi=roi,
         )
     except EncodingOff as e:
         return jsonify({'error': str(e)}), 409

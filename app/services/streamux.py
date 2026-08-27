@@ -10,6 +10,7 @@ This is not ABR HLS. HLS ABR stays in Settings for browser players.
 """
 import json
 import logging
+import math
 import os
 import re
 import signal
@@ -30,6 +31,11 @@ OVERLAY_STATE_FILE = os.path.join(DATA_DIR, 'streamux_overlay.json')
 LEGACY_OVERLAY_STATE_FILE = os.path.join(DATA_DIR, 'overview_overlay.json')
 OVERLAY_DIR = os.path.join(DATA_DIR, 'streamux-overlay')
 LEGACY_OVERLAY_DIR = os.path.join(DATA_DIR, 'overview-overlay')
+ROI_STATE_FILE = os.path.join(DATA_DIR, 'streamux_roi.json')
+ROI_MIN_FRAC = 0.10
+_UNSET = object()
+STILL_TIMEOUT_S = 8.0
+STILL_CACHE_S = 2.0
 FFMPEG_LOG_DIR = os.path.join(LOGS_DIR, 'ffmpeg')
 FONT_CANDIDATES = (
     '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
@@ -105,6 +111,14 @@ class EncodingOff(Exception):
     """Profile encoder is disabled; published path is a copy of ingest."""
 
 
+class StillUnavailable(Exception):
+    """Could not grab a JPEG still from {name}__src."""
+
+    def __init__(self, message: str, status: int = 409):
+        super().__init__(message)
+        self.status = status
+
+
 def _flag_bool(value, default: bool = True) -> bool:
     if value is None:
         return default
@@ -115,6 +129,88 @@ def _flag_bool(value, default: bool = True) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ('1', 'true', 'yes', 'on')
     return bool(value)
+
+
+def _roi_number(value, key: str) -> float:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f'roi.{key} must be a number') from None
+    if not math.isfinite(n):
+        raise ValueError(f'roi.{key} must be a finite number')
+    return n
+
+
+def parse_roi(value):
+    """None clears. Dict becomes {enabled, x, y, w, h} fractions, or None if off.
+
+    x,y >= 0; w,h > 0; x+w <= 1; y+h <= 1. Reject boxes under 10% of width or height.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError('roi must be an object or null')
+    if 'enabled' in value and not _flag_bool(value.get('enabled'), True):
+        return None
+    for key in ('x', 'y', 'w', 'h'):
+        if key not in value:
+            raise ValueError(f'roi.{key} required')
+    x = _roi_number(value.get('x'), 'x')
+    y = _roi_number(value.get('y'), 'y')
+    w = _roi_number(value.get('w'), 'w')
+    h = _roi_number(value.get('h'), 'h')
+    if x < 0 or y < 0:
+        raise ValueError('roi x and y must be >= 0')
+    if w <= 0 or h <= 0:
+        raise ValueError('roi w and h must be > 0')
+    if (x + w) > 1.0 + 1e-9 or (y + h) > 1.0 + 1e-9:
+        raise ValueError('roi box must fit in the source frame')
+    if w < ROI_MIN_FRAC or h < ROI_MIN_FRAC:
+        raise ValueError('ROI box is too small (need at least 10% of width and height)')
+    if x + w > 1.0:
+        w = 1.0 - x
+    if y + h > 1.0:
+        h = 1.0 - y
+    return {
+        'enabled': True,
+        'x': x,
+        'y': y,
+        'w': w,
+        'h': h,
+    }
+
+
+def _fmt_roi_frac(n: float) -> str:
+    """ASCII digits only for ffmpeg -vf. Never interpolate raw user strings."""
+    s = format(float(n), '.6f')
+    if not re.fullmatch(r'[0-9]+\.[0-9]+', s):
+        raise ValueError('internal ROI format error')
+    return s
+
+
+def _roi_crop_filter(roi: dict) -> str:
+    x = _fmt_roi_frac(roi['x'])
+    y = _fmt_roi_frac(roi['y'])
+    w = _fmt_roi_frac(roi['w'])
+    h = _fmt_roi_frac(roi['h'])
+    return (
+        f'crop=floor(iw*{w}/2)*2:floor(ih*{h}/2)*2:'
+        f'floor(iw*{x}/2)*2:floor(ih*{y}/2)*2'
+    )
+
+
+def _roi_same(a, b) -> bool:
+    if not a and not b:
+        return True
+    if not a or not b:
+        return False
+    return (
+        bool(a.get('enabled')) == bool(b.get('enabled'))
+        and abs(float(a['x']) - float(b['x'])) < 1e-6
+        and abs(float(a['y']) - float(b['y'])) < 1e-6
+        and abs(float(a['w']) - float(b['w'])) < 1e-6
+        and abs(float(a['h']) - float(b['h'])) < 1e-6
+    )
 
 
 def parse_state_entry(value):
@@ -348,6 +444,8 @@ class StreamuxManager:
         self._profiles: dict = {}
         self._encoding: dict = {}
         self._overlays: dict = {}
+        self._rois: dict = {}
+        self._still_cache: dict = {}
         self._procs: dict = {}
         self._stderr: dict = {}
         self._errors: dict = {}
@@ -357,6 +455,7 @@ class StreamuxManager:
         self._migrate_overlay_dir()
         self._load()
         self._load_overlays()
+        self._load_roi()
 
     def _migrate_overlay_dir(self):
         if os.path.isdir(OVERLAY_DIR):
@@ -451,6 +550,49 @@ class StreamuxManager:
         except Exception as e:
             logger.error(f"streamux: could not save overlay flags: {e}")
 
+    def _load_roi(self):
+        if not os.path.isfile(ROI_STATE_FILE):
+            return
+        try:
+            with open(ROI_STATE_FILE, 'r') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return
+            loaded = {}
+            for k, v in data.items():
+                try:
+                    parsed = parse_roi(v)
+                except ValueError as e:
+                    logger.warning(f"streamux: skip invalid roi for {k}: {e}")
+                    continue
+                if parsed:
+                    loaded[str(k)] = parsed
+            self._rois = loaded
+        except Exception as e:
+            logger.warning(f"streamux: could not load {ROI_STATE_FILE}: {e}")
+
+    def _save_roi(self):
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with self._lock:
+                payload = {}
+                for k, v in self._rois.items():
+                    if not v or not v.get('enabled'):
+                        continue
+                    payload[k] = {
+                        'enabled': True,
+                        'x': round(float(v['x']), 6),
+                        'y': round(float(v['y']), 6),
+                        'w': round(float(v['w']), 6),
+                        'h': round(float(v['h']), 6),
+                    }
+            tmp = ROI_STATE_FILE + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(payload, f)
+            os.replace(tmp, ROI_STATE_FILE)
+        except Exception as e:
+            logger.error(f"streamux: could not save roi: {e}")
+
     def get_profile(self, stream_name: str) -> str:
         with self._lock:
             return self._profiles.get(stream_name, DEFAULT_PROFILE)
@@ -482,10 +624,16 @@ class StreamuxManager:
         with self._lock:
             return bool(self._overlays.get(stream_name, False))
 
+    def get_roi(self, stream_name: str):
+        with self._lock:
+            roi = self._rois.get(stream_name)
+            return dict(roi) if roi else None
+
     def status(self, stream_name: str) -> dict:
         profile = self.get_profile(stream_name)
         overlay = self.get_overlay(stream_name)
         encoding = self.get_encoding(stream_name)
+        roi = self.get_roi(stream_name)
         with self._lock:
             proc = self._procs.get(stream_name)
             running = bool(proc and proc.poll() is None)
@@ -507,6 +655,7 @@ class StreamuxManager:
             'profile': profile,
             'overlay': overlay,
             'encoding': encoding,
+            'roi': roi,
             'mode': 'encode' if encoding else 'passthrough',
             'running': running,
             'sourcePath': src,
@@ -556,27 +705,37 @@ class StreamuxManager:
         return self.update(stream_name, encoding=bool(enabled))
 
     def update(self, stream_name: str, profile: str | None = None, overlay: bool | None = None,
-               encoding: bool | None = None, force: bool = False) -> dict:
+               encoding: bool | None = None, roi=_UNSET, force: bool = False) -> dict:
         if profile is not None:
             profile = normalize_profile(profile)
             if profile not in PROFILES:
                 raise ValueError(f'Unknown profile: {profile}')
+        new_roi = parse_roi(roi) if roi is not _UNSET else _UNSET
         pub = (mediamtx.get_path(stream_name) or {}).get('ready')
         with self._lock:
             current_profile = self._profiles.get(stream_name, DEFAULT_PROFILE)
             current_overlay = bool(self._overlays.get(stream_name, False))
             current_encoding = bool(self._encoding.get(stream_name, True))
+            current_roi = dict(self._rois[stream_name]) if self._rois.get(stream_name) else None
             new_profile = current_profile if profile is None else profile
             new_overlay = current_overlay if overlay is None else bool(overlay)
             new_encoding = current_encoding if encoding is None else bool(encoding)
+            if new_roi is _UNSET:
+                new_roi = current_roi
             proc = self._procs.get(stream_name)
             alive = bool(proc and proc.poll() is None)
             self._profiles[stream_name] = new_profile
             self._overlays[stream_name] = new_overlay
             self._encoding[stream_name] = new_encoding
+            if new_roi:
+                self._rois[stream_name] = new_roi
+            else:
+                self._rois.pop(stream_name, None)
         self._save()
         self._save_overlays()
+        self._save_roi()
         encoding_changed = current_encoding != new_encoding
+        roi_changed = not _roi_same(current_roi, new_roi)
         if new_encoding:
             need_restart = (
                 force
@@ -585,16 +744,18 @@ class StreamuxManager:
                 or not pub
                 or current_profile != new_profile
                 or current_overlay != new_overlay
+                or roi_changed
             )
         else:
-            # Overlay cannot burn on -c copy. Do not spawn x264 because overlay
-            # or profile changed, or because the published path is briefly down.
+            # Overlay/ROI cannot burn on -c copy. Do not spawn x264 because overlay,
+            # roi, or profile changed, or because the published path is briefly down.
             need_restart = force or encoding_changed or not alive
         if need_restart:
             logger.info(
                 f"streamux {stream_name}: profile {current_profile} -> {new_profile} "
                 f"overlay {current_overlay} -> {new_overlay} "
-                f"encoding {current_encoding} -> {new_encoding} force={force}"
+                f"encoding {current_encoding} -> {new_encoding} "
+                f"roi {bool(current_roi)} -> {bool(new_roi)} force={force}"
             )
             self._restart(stream_name)
         from app.websocket.broadcast import broadcast
@@ -679,8 +840,12 @@ class StreamuxManager:
                 )
             if use_overlay:
                 self._seed_overlay_text(stream_name, profile_id)
+            roi = self.get_roi(stream_name)
             cmd = self._build_cmd(stream_name, profile_id, overlay=use_overlay, font=font)
-            spawn_note = f"profile={profile_id} overlay={'on' if use_overlay else 'off'}"
+            spawn_note = (
+                f"profile={profile_id} overlay={'on' if use_overlay else 'off'} "
+                f"roi={'on' if (roi and roi.get('enabled')) else 'off'}"
+            )
         else:
             cmd = self._build_passthrough_cmd(stream_name)
             spawn_note = 'mode=passthrough encoding=off'
@@ -963,6 +1128,9 @@ class StreamuxManager:
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
             f"fps={fps},setpts=N/{fps}/TB,format=yuv420p"
         )
+        roi = self.get_roi(stream_name)
+        if roi and roi.get('enabled'):
+            vf = f"{_roi_crop_filter(roi)},{vf}"
         if overlay and font:
             text_path = _overlay_text_path(stream_name)
             fontsize = max(14, min(32, int(h / 16)))
@@ -1032,6 +1200,61 @@ class StreamuxManager:
             '-f', 'mpegts',
             f'srt://127.0.0.1:8890?streamid=publish:{stream_name}',
         ]
+
+
+    def grab_still(self, stream_name: str) -> bytes:
+        """JPEG still from {name}__src. Never the published {name} picture."""
+        src = source_name(stream_name)
+        src_path = mediamtx.get_path(src) or {}
+        if not src_path.get('ready'):
+            raise StillUnavailable(
+                'Source is not reaching this box. Cannot grab a still.',
+                status=409,
+            )
+        now = time.monotonic()
+        with self._lock:
+            hit = self._still_cache.get(stream_name)
+        if hit and (now - hit[0]) < STILL_CACHE_S:
+            return hit[1]
+        from app.api.settings import server_settings
+        transport = server_settings.get('rtsp_transport', 'tcp')
+        src_url = f'{MEDIAMTX_RTSP_URL}/{src}'
+        cmd = [
+            'ffmpeg', '-loglevel', 'error',
+            '-rtsp_transport', transport,
+            '-timeout', '8000000',
+            '-i', src_url,
+            '-an',
+            '-frames:v', '1',
+            '-f', 'image2',
+            '-vcodec', 'mjpeg',
+            'pipe:1',
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=STILL_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise StillUnavailable(
+                'Timed out grabbing a still from the source.',
+                status=504,
+            ) from e
+        jpeg = proc.stdout or b''
+        if proc.returncode != 0 or not jpeg.startswith(b'\xff\xd8'):
+            err = (proc.stderr or b'').decode('utf-8', errors='replace')[:200]
+            logger.warning(f"streamux {stream_name}: still grab failed: {err}")
+            raise StillUnavailable(
+                'Could not grab a still from the source.',
+                status=502,
+            )
+        with self._lock:
+            self._still_cache[stream_name] = (time.monotonic(), jpeg)
+        return jpeg
 
 
 streamux_manager = StreamuxManager()

@@ -162,11 +162,32 @@ class ABRManager:
     # State Persistence
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_source(source: str) -> str:
+        if source == 'wall':
+            return 'wall'
+        return 'operator'
+
+    def _holder_snapshot(self, state: dict) -> dict:
+        return {
+            'operator': bool(state.get('operator')),
+            'wall': int(state.get('wall', 0)),
+        }
+
+    def _apply_holder_locked(self, state: dict, source: str):
+        if source == 'operator':
+            state['operator'] = True
+        else:
+            state['wall'] = int(state.get('wall', 0)) + 1
+
     def _save_state(self):
-        """Persist active stream names to disk."""
+        """Persist operator-enabled ABR streams only (not Video Wall auto-starts)."""
         try:
             with self._lock:
-                active = list(self._streams.keys())
+                active = [
+                    name for name, state in self._streams.items()
+                    if state.get('operator')
+                ]
             os.makedirs(os.path.dirname(ABR_STATE_FILE), exist_ok=True)
             with open(ABR_STATE_FILE, 'w') as f:
                 json.dump({'streams': active}, f)
@@ -206,7 +227,7 @@ class ABRManager:
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get('ready', False):
-                        self.start(stream_name)
+                        self.start(stream_name, source='operator')
                         logger.info(f"ABR auto-restored for {stream_name}")
                         return
             except Exception:
@@ -218,35 +239,54 @@ class ABRManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def start(self, stream_name: str) -> dict:
-        """Start ABR transcoding for a stream."""
+    def start(self, stream_name: str, source: str = 'operator') -> dict:
+        """Start ABR transcoding for a stream.
+
+        source='operator' (Dashboard ABR toggle) persists across restarts.
+        source='wall' is a Video Wall viewer hold and is not persisted.
+        """
+        source = self._normalize_source(source)
+        already = False
+        holders = {'operator': False, 'wall': 0}
         with self._lock:
-            if stream_name in self._streams:
-                state = self._streams[stream_name]
-                if state.get('active'):
-                    return {'status': 'already_running', 'stream': stream_name}
+            state = self._streams.get(stream_name)
+            if state and state.get('active'):
+                self._apply_holder_locked(state, source)
+                already = True
+                holders = self._holder_snapshot(state)
+            else:
+                stream_dir = os.path.join(HLS_OUTPUT_DIR, stream_name)
 
-            stream_dir = os.path.join(HLS_OUTPUT_DIR, stream_name)
+                # Do NOT clean up existing segments here. Leaving old segments in
+                # place means clients get the previous playlist (with stale but
+                # valid segments) during the gap between start() and when FFmpeg
+                # writes its first new segment, avoiding a 404 window on
+                # explicit stop→start cycles. FFmpeg will overwrite segments as
+                # it progresses; stop() already performs the authoritative cleanup.
+                os.makedirs(stream_dir, exist_ok=True)
 
-            # Do NOT clean up existing segments here. Leaving old segments in
-            # place means clients get the previous playlist (with stale but
-            # valid segments) during the gap between start() and when FFmpeg
-            # writes its first new segment, avoiding a 404 window on
-            # explicit stop→start cycles. FFmpeg will overwrite segments as
-            # it progresses; stop() already performs the authoritative cleanup.
-            os.makedirs(stream_dir, exist_ok=True)
+                state = {
+                    'active': True,
+                    'stream_dir': stream_dir,
+                    'process': None,
+                    'started_at': 0,
+                    'restart_count': 0,
+                    'stop_requested': False,
+                    'operator': False,
+                    'wall': 0,
+                }
+                self._apply_holder_locked(state, source)
+                self._streams[stream_name] = state
+                holders = self._holder_snapshot(state)
 
-            state = {
-                'active': True,
-                'stream_dir': stream_dir,
-                'process': None,
-                'started_at': 0,
-                'restart_count': 0,
-                'stop_requested': False,
-            }
-            self._streams[stream_name] = state
+        if not already:
+            self._start_monitor_thread(stream_name)
 
-        # Start the monitor thread which handles process lifecycle
+        self._save_state()
+        status = 'already_running' if already else 'started'
+        return {'status': status, 'stream': stream_name, **holders}
+
+    def _start_monitor_thread(self, stream_name: str):
         t = threading.Thread(
             target=self._run_loop,
             args=(stream_name,),
@@ -255,21 +295,58 @@ class ABRManager:
         )
         t.start()
 
-        self._save_state()
-        return {'status': 'started', 'stream': stream_name}
+    def stop(self, stream_name: str, source: str = 'operator') -> dict:
+        """Stop ABR transcoding for a stream.
 
-    def stop(self, stream_name: str) -> dict:
-        """Stop ABR transcoding for a stream."""
+        source='operator' (Dashboard ABR OFF) always tears the process down.
+        source='wall' releases one Video Wall hold and only stops the process
+        when no operator hold and no remaining wall viewers are left.
+        """
+        source = self._normalize_source(source)
+        teardown_state = None
+        holders = {'operator': False, 'wall': 0}
         with self._lock:
-            state = self._streams.pop(stream_name, None)
+            state = self._streams.get(stream_name)
+            if state is None:
+                return {
+                    'status': 'not_running',
+                    'stream': stream_name,
+                    'running': False,
+                    **holders,
+                }
 
-        if state is None:
-            return {'status': 'not_running', 'stream': stream_name}
+            if source == 'operator':
+                teardown_state = self._streams.pop(stream_name, state)
+            else:
+                state['wall'] = max(0, int(state.get('wall', 0)) - 1)
+                if not state.get('operator') and state['wall'] == 0:
+                    teardown_state = self._streams.pop(stream_name, state)
+                else:
+                    holders = self._holder_snapshot(state)
 
+        if teardown_state is not None:
+            self._teardown(teardown_state, stream_name)
+            self._save_state()
+            return {
+                'status': 'stopped',
+                'stream': stream_name,
+                'running': False,
+                'operator': False,
+                'wall': 0,
+            }
+
+        self._save_state()
+        return {
+            'status': 'released',
+            'stream': stream_name,
+            'running': True,
+            **holders,
+        }
+
+    def _teardown(self, state: dict, stream_name: str):
         state['stop_requested'] = True
         state['active'] = False
 
-        # Fire SIGKILL at current process, don't wait
         proc = state.get('process')
         if proc and proc.poll() is None:
             try:
@@ -277,11 +354,8 @@ class ABRManager:
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
-        # Clean up HLS segments
         self._cleanup_segments(state['stream_dir'])
         logger.info(f"ABR stopped: {stream_name}")
-        self._save_state()
-        return {'status': 'stopped', 'stream': stream_name}
 
     def status(self, stream_name: str) -> dict:
         """Return status of ABR transcoding for a stream."""
@@ -289,7 +363,12 @@ class ABRManager:
             state = self._streams.get(stream_name)
 
         if state is None:
-            return {'running': False, 'stream': stream_name}
+            return {
+                'running': False,
+                'stream': stream_name,
+                'operator': False,
+                'wall': 0,
+            }
 
         proc = state.get('process')
         process_alive = proc is not None and proc.poll() is None
@@ -308,6 +387,8 @@ class ABRManager:
             'pid': proc.pid if proc else None,
             'restart_count': state.get('restart_count', 0),
             'uptime_seconds': int(time.time() - state['started_at']) if process_alive else 0,
+            'operator': bool(state.get('operator')),
+            'wall': int(state.get('wall', 0)),
         }
 
     def list_active(self) -> list:
@@ -323,6 +404,8 @@ class ABRManager:
                     'running': state.get('active', False),
                     'restart_count': state.get('restart_count', 0),
                     'uptime_seconds': int(now - state['started_at']) if running else 0,
+                    'operator': bool(state.get('operator')),
+                    'wall': int(state.get('wall', 0)),
                 })
             return result
 
@@ -331,7 +414,7 @@ class ABRManager:
         with self._lock:
             names = list(self._streams.keys())
         for name in names:
-            self.stop(name)
+            self.stop(name, source='operator')
 
     def get_hls_dir(self, stream_name: str) -> Optional[str]:
         """Return the HLS output directory for a stream, or None."""
@@ -341,12 +424,25 @@ class ABRManager:
     def apply_settings(self, settings: dict):
         """Apply new ABR settings by restarting all active ABR processes."""
         with self._lock:
-            active_streams = list(self._streams.keys())
-        for stream_name in active_streams:
+            snapshot = [
+                (name, bool(st.get('operator')), int(st.get('wall', 0)))
+                for name, st in self._streams.items()
+            ]
+        for stream_name, operator, wall in snapshot:
             logger.info(f"Restarting ABR for {stream_name} with new settings")
-            self.stop(stream_name)
+            self.stop(stream_name, source='operator')
             time.sleep(1)
-            self.start(stream_name)
+            if operator:
+                self.start(stream_name, source='operator')
+            elif wall > 0:
+                self.start(stream_name, source='wall')
+                wall -= 1
+            if wall > 0:
+                with self._lock:
+                    st = self._streams.get(stream_name)
+                    if st:
+                        st['wall'] = int(st.get('wall', 0)) + wall
+                self._save_state()
 
     # ------------------------------------------------------------------
     # Process Lifecycle Loop
