@@ -738,25 +738,47 @@ class TestWebInterface:
         assert b'/log?lines=' in response.data
         assert b'data-encoding' in response.data
         assert b'Turn encoding on to change profile' in response.data
+        assert b'Viewers keep a copy of the source' not in response.data
+        assert b'Turn encoding on to stop passthrough' in response.data
         assert b'setEncoding' in response.data
         assert b'encodingHold' in response.data
         assert b'id="streamux-hw"' in response.data
         assert b'Hardware Monitor' in response.data
         assert b"What's using CPU/RAM?" in response.data
         assert b'/api/streamux/hw' in response.data
-        assert b'streamux-roi-v1-20260827' in response.data
+        assert b'streamux-enc-passthrough-hint-20260827' in response.data
         assert b'streamux-switch' in response.data
         assert b'role="switch"' in response.data
+        assert b'aria-label="Encoding"' in response.data
         assert b'streamux-hw-temp' in response.data
         assert b'>Temp<' in response.data
         assert b'streamux-hw-scope' not in response.data
         assert b'CM5 kernel' not in response.data
+        assert b'streamux-settings' in response.data
+        assert b'streamux-setting-box' in response.data
+        assert b'streamux-setting-toggle' in response.data
+        assert b'streamux-setting-btn' in response.data
+        assert b'streamux-setting-dot' in response.data
+        assert b'paintRoiDot' in response.data
+        assert b'streamux-setting-pill' not in response.data
+        assert b'streamux-settings-col' not in response.data
+        assert b'streamux-setting-change' not in response.data
+        assert b'Diagnostic overlay' in response.data
+        assert b'Show Diagnostic Overlay' not in response.data
+        assert b'data-overlay' in response.data
+        assert b'Overlay off' not in response.data
+        assert b'ROI off' not in response.data
         assert b'Region of interest' in response.data
+        assert b'>Change</button>' not in response.data
         assert b'streamux-roi-modal' in response.data
         assert b'naturalWidth' in response.data
         assert b'/still' in response.data
         assert b'If the camera pans' in response.data
         html = response.data.decode('utf-8')
+        # Overlay row: label left, switch right (mirrors ROI label / dot)
+        overlay_label = html.find('streamux-setting-label">Diagnostic overlay')
+        overlay_switch = html.find('class="streamux-switch"', overlay_label)
+        assert 0 <= overlay_label < overlay_switch
         assert html.find('streamux-lead') < html.find('id="streamux-hw"') < html.find('>Profiles<')
         assert b'rung' not in response.data.lower()
 
@@ -1532,7 +1554,12 @@ class TestStreamuxAPI:
         response = client.get('/static/styles.css')
         assert response.status_code == 200
         assert 'text/css' in response.content_type
-    
+        assert b'.streamux-settings' in response.data
+        assert b'--streamux-profile-cols' in response.data
+        assert b'--streamux-settings-half-col' in response.data
+        assert b'calc((100% - 1.2rem) / 6)' in response.data
+        assert b'grid-template-columns: max-content' in response.data
+
     def test_static_js_loads(self, client):
         """Test that JavaScript file loads successfully"""
         response = client.get('/static/client.js')

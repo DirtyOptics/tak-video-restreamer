@@ -1,6 +1,6 @@
 <!--
 StreamUx — ATAK published RTSP/SRT profiles. Not ABR HLS (see Settings).
-v=streamux-roi-v1-pill-20260827
+v=streamux-enc-passthrough-hint-20260827
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -8,7 +8,7 @@ v=streamux-roi-v1-pill-20260827
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StreamUx — TAK Video Restreamer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=streamux-roi-v1-pill-20260827">
+    <link rel="stylesheet" href="/static/styles.css?v=streamux-enc-passthrough-hint-20260827">
 </head>
 <body>
     <div class="container">
@@ -159,7 +159,6 @@ v=streamux-roi-v1-pill-20260827
         const STUCK_MS = 18000;
         const LOG_POLL_MS = 2000;
         const HW_POLL_MS = 3000;
-        const ENC_OFF_NOTE = 'Turn encoding on to change profile. Viewers keep a copy of the source. Picture may pause a few seconds while ffmpeg switches.';
         const ERR_RE = /error|warn(?:ing)?|\beof\b|dts discontinuity|i\/o error|404/i;
         let pollTimer = null;
         let hwTimer = null;
@@ -371,6 +370,7 @@ v=streamux-roi-v1-pill-20260827
                 const overlay = e.target.closest('[data-overlay]');
                 if (overlay && listEl.contains(overlay)) {
                     if (overlay.disabled) return;
+                    overlay.setAttribute('aria-checked', overlay.checked ? 'true' : 'false');
                     setOverlay(overlay.dataset.overlay, overlay.checked);
                     return;
                 }
@@ -459,10 +459,8 @@ v=streamux-roi-v1-pill-20260827
             const restart = stuck
                 ? `<button type="button" class="streamux-restart-link" data-restart="${escapeHtml(name)}">Restart</button>`
                 : '';
-            const encTitle = encodingOn
-                ? 'Low/Med/High x264'
-                : 'passthrough copy, viewers keep RTSP/SRT';
-            const encCtrl = `<label class="st st-encoding" title="${encTitle}"><span class="streamux-switch"><input type="checkbox" role="switch" aria-checked="${encodingOn ? 'true' : 'false'}" data-encoding="${escapeHtml(name)}"${encodingOn ? ' checked' : ''}${stopped ? ' disabled' : ''}><span class="streamux-switch-track" aria-hidden="true"></span></span> Encoding</label>`;
+            const encTitle = 'Encoding on: publish a Profile. Encoding off: passthrough (copy of source). Turn encoding on to stop passthrough.';
+            const encCtrl = `<label class="st st-encoding" title="${encTitle}"><span class="streamux-switch"><input type="checkbox" role="switch" aria-label="Encoding" aria-checked="${encodingOn ? 'true' : 'false'}" data-encoding="${escapeHtml(name)}"${encodingOn ? ' checked' : ''}${stopped ? ' disabled' : ''}><span class="streamux-switch-track" aria-hidden="true"></span></span> Encoding</label>`;
             return {
                 stopped, stuck, switching, encodingOn,
                 metaHtml: `${encCtrl}${encBit}${ingestBit}${atakBit}${restart}`,
@@ -511,11 +509,10 @@ v=streamux-roi-v1-pill-20260827
             if (overlay) {
                 overlay.checked = !!st.overlay;
                 overlay.disabled = bits.stopped || !bits.encodingOn;
+                overlay.setAttribute('aria-checked', overlay.checked ? 'true' : 'false');
             }
-            const overlayLabel = card.querySelector('.streamux-overlay');
-            if (overlayLabel) overlayLabel.title = overlayLockTitle;
-            const overlayHint = card.querySelector('.streamux-overlay-copy');
-            if (overlayHint) overlayHint.remove();
+            const overlayToggle = card.querySelector('.streamux-setting-toggle');
+            if (overlayToggle) overlayToggle.title = overlayLockTitle;
             const roiLock = roiLockBits(st, bits);
             const roiBtn = card.querySelector('[data-roi]');
             if (roiBtn) {
@@ -523,39 +520,17 @@ v=streamux-roi-v1-pill-20260827
                 roiBtn.title = roiLock.title;
             }
             const roiOn = !!(st.roi && st.roi.enabled);
-            let roiBadge = card.querySelector('.streamux-roi-badge');
-            const roiRow = card.querySelector('.streamux-roi-row');
-            if (roiOn) {
-                if (!roiBadge && roiRow) {
-                    roiBadge = document.createElement('span');
-                    roiRow.appendChild(roiBadge);
-                }
-                if (roiBadge) {
-                    roiBadge.className = 'st ok streamux-roi-badge';
-                    roiBadge.title = 'Region of interest is active';
-                    roiBadge.innerHTML = '<i class="st-dot"></i>ROI on';
-                }
-            } else if (roiBadge) {
-                roiBadge.remove();
-            }
-            let encOffP = card.querySelector('.streamux-encoding-off-note');
-            if (!bits.encodingOn && !bits.stopped && st.sourceReady) {
-                if (!encOffP) {
-                    encOffP = document.createElement('p');
-                    encOffP.className = 'streamux-overlay-hint streamux-encoding-off-note';
-                    if (overlayLabel) overlayLabel.after(encOffP);
-                }
-                encOffP.textContent = ENC_OFF_NOTE;
-            } else if (encOffP) {
-                encOffP.remove();
-            }
+            paintRoiDot(roiBtn, roiOn);
+            const settings = card.querySelector('.streamux-settings');
+            const encOffP = card.querySelector('.streamux-encoding-off-note');
+            if (encOffP) encOffP.remove();
             let stoppedP = card.querySelector('.streamux-stopped-note');
             if (bits.stopped) {
                 if (!stoppedP) {
                     stoppedP = document.createElement('p');
                     stoppedP.className = 'streamux-overlay-hint streamux-stopped-note';
                     stoppedP.textContent = 'Stopped on the Dashboard — ingest is off. Start it there to resume, or Delete to remove it.';
-                    if (overlayLabel) overlayLabel.after(stoppedP);
+                    if (settings) settings.after(stoppedP);
                     else card.insertBefore(stoppedP, card.querySelector('.streamux-log-box'));
                 }
             } else if (stoppedP) {
@@ -830,9 +805,7 @@ v=streamux-roi-v1-pill-20260827
                     : '');
             const roiLock = roiLockBits(st, bits);
             const roiOn = !!(st.roi && st.roi.enabled);
-            const encodingOffNote = (!bits.encodingOn && !bits.stopped && st.sourceReady)
-                ? `<p class="streamux-overlay-hint streamux-encoding-off-note">${ENC_OFF_NOTE}</p>`
-                : '';
+            const overlayOn = !!st.overlay;
             const stoppedNote = bits.stopped
                 ? '<p class="streamux-overlay-hint streamux-stopped-note">Stopped on the Dashboard — ingest is off. Start it there to resume, or Delete to remove it.</p>'
                 : '';
@@ -855,15 +828,27 @@ v=streamux-roi-v1-pill-20260827
                     <span class="streamux-meta" data-sig="${escapeHtml(bits.metaSig)}">${bits.metaHtml}</span>
                 </div>
                 <div class="profile-bar">${buttons}</div>
-                <label class="streamux-overlay"${overlayTitle ? ` title="${escapeHtml(overlayTitle)}"` : ''}>
-                    <input type="checkbox" data-overlay="${escapeHtml(name)}"${st.overlay ? ' checked' : ''}${overlayLocked ? ' disabled' : ''}>
-                    Show Diagnostic Overlay
-                </label>
-                <div class="streamux-roi-row">
-                    <button type="button" class="streamux-roi-open" data-roi="${escapeHtml(name)}"${roiLock.locked ? ' disabled' : ''}${roiLock.title ? ` title="${escapeHtml(roiLock.title)}"` : ''}>Region of interest</button>
-                    ${roiOn ? '<span class="st ok streamux-roi-badge" title="Region of interest is active"><i class="st-dot"></i>ROI on</span>' : ''}
+                <div class="streamux-settings">
+                    <div class="streamux-setting">
+                        <label class="streamux-setting-box streamux-setting-toggle"${overlayTitle ? ` title="${escapeHtml(overlayTitle)}"` : ''}>
+                            <span class="streamux-setting-label">Diagnostic overlay</span>
+                            <span class="streamux-setting-control">
+                                <span class="streamux-switch">
+                                    <input type="checkbox" role="switch" aria-label="Diagnostic overlay" aria-checked="${overlayOn ? 'true' : 'false'}" data-overlay="${escapeHtml(name)}"${overlayOn ? ' checked' : ''}${overlayLocked ? ' disabled' : ''}>
+                                    <span class="streamux-switch-track" aria-hidden="true"></span>
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+                    <div class="streamux-setting">
+                        <button type="button" class="streamux-setting-box streamux-setting-btn" data-roi="${escapeHtml(name)}"${roiLock.locked ? ' disabled' : ''}${roiLock.title ? ` title="${escapeHtml(roiLock.title)}"` : ''} aria-label="Region of interest${roiOn ? ', on' : ', off'}">
+                            <span class="streamux-setting-label">Region of interest</span>
+                            <span class="streamux-setting-control">
+                                <i class="streamux-setting-dot${roiOn ? ' on' : ' off'}" aria-hidden="true" title="${roiOn ? 'Region of interest is on' : 'Region of interest is off'}"></i>
+                            </span>
+                        </button>
+                    </div>
                 </div>
-                ${encodingOffNote}
                 ${stoppedNote}
                 ${errNote}
                 <div class="streamux-log-box${logOpen}" data-log="${escapeHtml(name)}">
@@ -975,6 +960,25 @@ v=streamux-roi-v1-pill-20260827
             }
             toast(name + (enabled ? ' overlay on' : ' overlay off'), true);
             loadStreamux();
+        }
+
+        function paintRoiDot(btn, on) {
+            if (!btn) return;
+            let col = btn.querySelector('.streamux-setting-control');
+            if (!col) {
+                col = document.createElement('span');
+                col.className = 'streamux-setting-control';
+                btn.appendChild(col);
+            }
+            let dot = col.querySelector('.streamux-setting-dot');
+            if (!dot) {
+                dot = document.createElement('i');
+                dot.setAttribute('aria-hidden', 'true');
+                col.appendChild(dot);
+            }
+            dot.className = 'streamux-setting-dot' + (on ? ' on' : ' off');
+            dot.title = on ? 'Region of interest is on' : 'Region of interest is off';
+            btn.setAttribute('aria-label', 'Region of interest' + (on ? ', on' : ', off'));
         }
 
         function roiLockBits(st, bits) {
